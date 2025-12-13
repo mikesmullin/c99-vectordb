@@ -10,19 +10,12 @@ void* Arena__Push(Arena* arena, size_t size);
 void Arena__Free(Arena* arena);
 
 typedef enum {
-    VDB_BACKEND_CPU,
-    VDB_BACKEND_GPU
-} VDB_Backend;
-
-typedef enum {
-    VDB_METRIC_L2,
     VDB_METRIC_COSINE,
     VDB_METRIC_DOT
 } VDB_Metric;
 
 typedef struct {
     Arena* arena;
-    VDB_Backend backend;
     VulkanCtx vk_ctx;
 } VDB_Context;
 
@@ -44,7 +37,7 @@ typedef struct {
 } VDB_Result;
 
 // API
-void VDB_Init(VDB_Context* ctx, VDB_Backend backend, Arena* arena);
+void VDB_Init(VDB_Context* ctx, Arena* arena);
 VDB_Index* VDB_Index_Create(VDB_Context* ctx, int dim, VDB_Metric metric, int capacity);
 void VDB_Index_Add(VDB_Index* idx, u64 id, const f32* vector);
 void VDB_Search(VDB_Index* idx, const f32* query_vec, int k, VDB_Result* results);

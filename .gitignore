@@ -2,3 +2,4 @@ build/
 tmp/
 *.vdb
 *.txt
+PROMPT.md

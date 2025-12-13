@@ -43,13 +43,16 @@ Run the interactive CLI:
 ### Example
 
 ```bash
-> memo hello world
-Memorized: 'hello world' (ID: 0)
-> memo foo bar
-Memorized: 'foo bar' (ID: 1)
-> recall 1 hello
-Top 1 results for 'hello':
-  [1] Score: -0.0137 | hello world
+> memo my name is Bob
+Memorized: 'my name is Bob' (ID: 0)
+> memo cake is for birthdays
+Memorized: 'cake is for birthdays' (ID: 1)
+> memo carrots are orange
+Memorized: 'carrots are orange' (ID: 2)
+> recall 2 party food
+Top 2 results for 'party food':
+  [1] Score: 0.3026 | cake is for birthdays
+  [2] Score: 0.2987 | carrots are orange
 ```
 
 ## Implementation Details

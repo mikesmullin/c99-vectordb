@@ -4,12 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void VDB_Init(VDB_Context* ctx, VDB_Backend backend, Arena* arena) {
-    ctx->backend = backend;
+void VDB_Init(VDB_Context* ctx, Arena* arena) {
     ctx->arena = arena;
-    if (backend == VDB_BACKEND_GPU) {
-        Vulkan_Init(&ctx->vk_ctx);
-    }
+    Vulkan_Init(&ctx->vk_ctx);
 }
 
 VDB_Index* VDB_Index_Create(VDB_Context* ctx, int dim, VDB_Metric metric, int capacity) {
@@ -23,14 +20,12 @@ VDB_Index* VDB_Index_Create(VDB_Context* ctx, int dim, VDB_Metric metric, int ca
     idx->ids = (u64*)Arena__Push(ctx->arena, capacity * sizeof(u64));
     idx->vectors = (f32*)Arena__Push(ctx->arena, capacity * dim * sizeof(f32));
     
-    if (ctx->backend == VDB_BACKEND_GPU) {
-        // Pre-allocate GPU buffers
-        // Note: In a real app we'd resize dynamically. Here we alloc capacity.
-        size_t idx_size = capacity * dim * sizeof(f32);
-        size_t q_size = dim * sizeof(f32);
-        size_t score_size = capacity * sizeof(f32);
-        Vulkan_PrepareBuffers(&ctx->vk_ctx, idx_size, q_size, score_size);
-    }
+    // Pre-allocate GPU buffers
+    // Note: In a real app we'd resize dynamically. Here we alloc capacity.
+    size_t idx_size = capacity * dim * sizeof(f32);
+    size_t q_size = dim * sizeof(f32);
+    size_t score_size = capacity * sizeof(f32);
+    Vulkan_PrepareBuffers(&ctx->vk_ctx, idx_size, q_size, score_size);
     
     return idx;
 }
@@ -54,22 +49,6 @@ void VDB_Index_Add(VDB_Index* idx, u64 id, const f32* vector) {
     idx->count++;
 }
 
-// Helper: Cosine Similarity
-static f32 cosine_similarity(const f32* a, const f32* b, int dim) {
-    f32 dot = 0.0f;
-    f32 norm_a = 0.0f;
-    f32 norm_b = 0.0f;
-    
-    for (int i = 0; i < dim; i++) {
-        dot += a[i] * b[i];
-        norm_a += a[i] * a[i];
-        norm_b += b[i] * b[i];
-    }
-    
-    if (norm_a == 0 || norm_b == 0) return 0.0f;
-    return dot / (sqrtf(norm_a) * sqrtf(norm_b));
-}
-
 // Helper: Compare for qsort (descending score)
 static int compare_results(const void* a, const void* b) {
     VDB_Result* r1 = (VDB_Result*)a;
@@ -82,54 +61,32 @@ static int compare_results(const void* a, const void* b) {
 void VDB_Search(VDB_Index* idx, const f32* query_vec, int k, VDB_Result* results) {
     VDB_Result* all_results = (VDB_Result*)malloc(idx->count * sizeof(VDB_Result));
     
-    if (idx->ctx->backend == VDB_BACKEND_GPU) {
-        // GPU Path
-        VulkanCtx* vk = &idx->ctx->vk_ctx;
-        
-        // 1. Upload Data (Naive: Upload all every time for prototype correctness)
-        // Optimization: Only upload new part? Or keep mirror?
-        // For now: Upload everything.
-        Vulkan_UploadIndex(vk, idx->vectors, idx->count * idx->dim * sizeof(f32));
-        Vulkan_UploadQuery(vk, query_vec, idx->dim * sizeof(f32));
-        
-        // 2. Dispatch
-        // Metric mapping: L2=0, Cosine=1, Dot=2
-        u32 metric_id = 0;
-        if (idx->metric == VDB_METRIC_COSINE) metric_id = 1;
-        if (idx->metric == VDB_METRIC_DOT) metric_id = 2;
-        
-        Vulkan_Dispatch(vk, idx->count, idx->dim, metric_id);
-        
-        // 3. Download Scores
-        f32* gpu_scores = (f32*)malloc(idx->count * sizeof(f32));
-        Vulkan_DownloadScores(vk, gpu_scores, idx->count * sizeof(f32));
-        
-        // 4. Fill results
-        for (int i = 0; i < idx->count; i++) {
-            all_results[i].id = idx->ids[i];
-            all_results[i].score = gpu_scores[i];
-        }
-        free(gpu_scores);
-        
-    } else {
-        // CPU Path
-        for (int i = 0; i < idx->count; i++) {
-            f32 score = 0.0f;
-            f32* vec = idx->vectors + (i * idx->dim);
-            
-            if (idx->metric == VDB_METRIC_COSINE) {
-                score = cosine_similarity(query_vec, vec, idx->dim);
-            } else {
-                // Default to Dot Product
-                 for (int j = 0; j < idx->dim; j++) {
-                    score += query_vec[j] * vec[j];
-                }
-            }
-            
-            all_results[i].id = idx->ids[i];
-            all_results[i].score = score;
-        }
+    // GPU Path
+    VulkanCtx* vk = &idx->ctx->vk_ctx;
+    
+    // 1. Upload Data (Naive: Upload all every time for prototype correctness)
+    // Optimization: Only upload new part? Or keep mirror?
+    // For now: Upload everything.
+    Vulkan_UploadIndex(vk, idx->vectors, idx->count * idx->dim * sizeof(f32));
+    Vulkan_UploadQuery(vk, query_vec, idx->dim * sizeof(f32));
+    
+    // 2. Dispatch
+    // Metric mapping: Cosine=1, Dot=2
+    u32 metric_id = 1;
+    if (idx->metric == VDB_METRIC_DOT) metric_id = 2;
+    
+    Vulkan_Dispatch(vk, idx->count, idx->dim, metric_id);
+    
+    // 3. Download Scores
+    f32* gpu_scores = (f32*)malloc(idx->count * sizeof(f32));
+    Vulkan_DownloadScores(vk, gpu_scores, idx->count * sizeof(f32));
+    
+    // 4. Fill results
+    for (int i = 0; i < idx->count; i++) {
+        all_results[i].id = idx->ids[i];
+        all_results[i].score = gpu_scores[i];
     }
+    free(gpu_scores);
     
     // 2. Sort (Naive full sort for now)
     qsort(all_results, idx->count, sizeof(VDB_Result), compare_results);
