@@ -93,7 +93,8 @@ int main(int argc, char** argv) {
     Arena__Init(&arena, 1024 * 1024 * 256); // 256MB
     
     VDB_Context ctx;
-    VDB_Init(&ctx, VDB_BACKEND_CPU, &arena);
+    // VDB_Init(&ctx, VDB_BACKEND_CPU, &arena);
+    VDB_Init(&ctx, VDB_BACKEND_GPU, &arena);
     
     VDB_Index* index = VDB_Index_Create(&ctx, DIM, VDB_METRIC_COSINE, 10000);
     

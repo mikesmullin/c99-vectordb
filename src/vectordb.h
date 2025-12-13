@@ -2,6 +2,7 @@
 #define VECTORDB_H
 
 #include "app_types.h"
+#include "vulkan_backend.h"
 
 typedef enum {
     VDB_BACKEND_CPU,
@@ -17,9 +18,11 @@ typedef enum {
 typedef struct {
     Arena* arena;
     VDB_Backend backend;
+    VulkanCtx vk_ctx;
 } VDB_Context;
 
 typedef struct {
+    VDB_Context* ctx; // Backpointer
     int dim;
     int count;
     int capacity;
