@@ -54,5 +54,5 @@ Top 1 results for 'hello':
 
 ## Implementation Details
 
-- **Embeddings**: Currently uses a deterministic pseudo-random generator for demonstration. In a real application, you would plug in an inference engine (like the C99-LLM) to generate semantic embeddings.
+- **Embeddings**: Uses **TinyLlama 110M** to generate 768-dimensional semantic embeddings.
 - **Backend**: The `VDB_Search` function dispatches a compute shader (`vdb_search.comp`) that calculates dot products in parallel across the GPU.

@@ -5,8 +5,57 @@
 #include <time.h>
 #include <math.h>
 
+// Arena Declarations (implemented in memory.c)
+void Arena__Init(Arena* arena, size_t size);
+void* Arena__Push(Arena* arena, size_t size);
+void Arena__Free(Arena* arena);
+
+// LLM Includes
+#include "vulkan_ctx.c"
+#include "llm_model.c"
+#include "tokenizer.c"
+#include "inference.c"
+
 #define MAX_CMD_LEN 1024
 #define DIM 768 // TinyLlama dim
+
+// Global LLM State
+Config llm_config;
+TransformerWeights llm_weights;
+RunState llm_state;
+LLM_VulkanCtx llm_vk_ctx;
+Tokenizer tokenizer;
+int llm_initialized = 0;
+
+void Init_LLM(Arena* arena) {
+    if (llm_initialized) return;
+    printf("Initializing TinyLlama 110M...\n");
+    LLM__Load("../../models/stories110M.bin", &llm_config, &llm_weights, arena);
+    LLM_VulkanCtx__Init(&llm_vk_ctx);
+    LLM_VulkanCtx__SetupPipeline(&llm_vk_ctx);
+    LLM_VulkanCtx__UploadWeights(&llm_vk_ctx, arena->base, arena->used);
+    LLM_VulkanCtx__PrepareBuffers(&llm_vk_ctx, 1024 * 1024, 1024 * 1024);
+    LLM__InitState(&llm_state, &llm_config, arena);
+    Tokenizer__Init(&tokenizer, "../../models/tokenizer.bin", llm_config.vocab_size, arena);
+    llm_initialized = 1;
+    printf("LLM Initialized.\n");
+}
+
+void embed_text_llm(const char* text, f32* out_vec, int dim, Arena* arena) {
+    if (!llm_initialized) { fprintf(stderr, "LLM not initialized!\n"); return; }
+    int* tokens = (int*)malloc((strlen(text) + 10) * 2 * sizeof(int)); 
+    int n_tokens;
+    Tokenizer__Encode(&tokenizer, text, tokens, &n_tokens);
+    for (int i = 0; i < n_tokens; i++) {
+        LLM__Forward(&llm_state, &llm_config, &llm_weights, tokens[i], i, &llm_vk_ctx, arena);
+    }
+    f32 norm = 0.0f;
+    for (int i = 0; i < dim; i++) norm += llm_state.x[i] * llm_state.x[i];
+    norm = sqrtf(norm);
+    if (norm > 1e-5f) { for (int i = 0; i < dim; i++) out_vec[i] = llm_state.x[i] / norm; }
+    else { memset(out_vec, 0, dim * sizeof(f32)); }
+    free(tokens);
+}
 
 // Simple Text Store
 typedef struct {
@@ -63,37 +112,22 @@ void TextStore_Load(TextStore* ts, const char* filename) {
     fclose(f);
 }
 
-// Dummy Embedding (Random)
-void embed_text(const char* text, f32* out_vec, int dim) {
-    // Deterministic-ish random based on text content to make it slightly consistent?
-    // No, just random for now.
-    // Actually, let's make it deterministic so "recall" works if we type the same thing.
-    u32 seed = 0;
-    for (const char* c = text; *c; c++) seed = seed * 31 + *c;
-    srand(seed);
-    
-    float norm = 0;
-    for (int i = 0; i < dim; i++) {
-        out_vec[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
-        norm += out_vec[i] * out_vec[i];
-    }
-    // Normalize
-    norm = sqrtf(norm);
-    for (int i = 0; i < dim; i++) out_vec[i] /= norm;
-}
+
 
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
     
-    printf("C99 VectorDB CLI\n");
+    printf("C99 VectorDB CLI (TinyLlama 110M Embeddings)\n");
     printf("Commands: load <file>, save <file>, memo <text>, recall <k> <text>, exit\n");
     
     // Init
     Arena arena;
-    Arena__Init(&arena, 1024 * 1024 * 256); // 256MB
+    Arena__Init(&arena, 1024 * 1024 * 1024); // 1GB
+    
+    // Init LLM
+    Init_LLM(&arena);
     
     VDB_Context ctx;
-    // VDB_Init(&ctx, VDB_BACKEND_CPU, &arena);
     VDB_Init(&ctx, VDB_BACKEND_GPU, &arena);
     
     VDB_Index* index = VDB_Index_Create(&ctx, DIM, VDB_METRIC_COSINE, 10000);
@@ -115,7 +149,7 @@ int main(int argc, char** argv) {
         if (strncmp(cmd_buf, "memo ", 5) == 0) {
             char* text = cmd_buf + 5;
             f32 vec[DIM];
-            embed_text(text, vec, DIM);
+            embed_text_llm(text, vec, DIM, &arena);
             
             u64 id = TextStore_Add(&ts, text);
             VDB_Index_Add(index, id, vec);
@@ -129,7 +163,7 @@ int main(int argc, char** argv) {
             char* text = ptr;
             
             f32 vec[DIM];
-            embed_text(text, vec, DIM);
+            embed_text_llm(text, vec, DIM, &arena);
             
             VDB_Result results[100]; // max k=100
             if (k > 100) k = 100;

@@ -4,6 +4,11 @@
 #include "app_types.h"
 #include "vulkan_backend.h"
 
+// Arena Declarations
+void Arena__Init(Arena* arena, size_t size);
+void* Arena__Push(Arena* arena, size_t size);
+void Arena__Free(Arena* arena);
+
 typedef enum {
     VDB_BACKEND_CPU,
     VDB_BACKEND_GPU

@@ -11,10 +11,12 @@ OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
 TARGET = $(BUILD_DIR)/vdb
 SHADER_SRC = shaders/vdb_search.comp
 SHADER_SPV = $(BUILD_DIR)/vdb_search.spv
+LLM_SHADER_SRC = shaders/headless.comp
+LLM_SHADER_SPV = $(BUILD_DIR)/headless.spv
 
 .PHONY: all clean
 
-all: $(TARGET) $(SHADER_SPV)
+all: $(TARGET) $(SHADER_SPV) $(LLM_SHADER_SPV)
 
 $(TARGET): $(OBJS)
 	@mkdir -p $(BUILD_DIR)
@@ -25,6 +27,10 @@ $(BUILD_DIR)/%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(SHADER_SPV): $(SHADER_SRC)
+	@mkdir -p $(BUILD_DIR)
+	glslc $< -o $@
+
+$(LLM_SHADER_SPV): $(LLM_SHADER_SRC)
 	@mkdir -p $(BUILD_DIR)
 	glslc $< -o $@
 
