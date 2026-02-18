@@ -1,0 +1,10 @@
+-ffp-contract=off
+-Wno-microsoft-enum-forward-reference
+-Wno-deprecated-non-prototype
+-Werror=incompatible-pointer-types
+-Wno-address-of-temporary
+-Wno-c99-designator
+-Wno-vla-cxx-extension
+-Wno-pragma-once-outside-header
+-Wno-switch
+-Wno-parentheses-equality

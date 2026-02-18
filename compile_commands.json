@@ -1,0 +1,102 @@
+[
+  {
+    "directory": "/workspace/c99-vectordb",
+    "arguments": [
+      "clang",
+      "@clang_options.rsp",
+      "-std=c99",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-D_GNU_SOURCE",
+      "-I",
+      "vendor",
+      "-c",
+      "src/main.c",
+      "-o",
+      "build/src/main.o"
+    ],
+    "file": "src/main.c"
+  },
+  {
+    "directory": "/workspace/c99-vectordb",
+    "arguments": [
+      "clang",
+      "@clang_options.rsp",
+      "-std=c99",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-D_GNU_SOURCE",
+      "-I",
+      "vendor",
+      "-c",
+      "src/vectordb.c",
+      "-o",
+      "build/src/vectordb.o"
+    ],
+    "file": "src/vectordb.c"
+  },
+  {
+    "directory": "/workspace/c99-vectordb",
+    "arguments": [
+      "clang",
+      "@clang_options.rsp",
+      "-std=c99",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-D_GNU_SOURCE",
+      "-I",
+      "vendor",
+      "-c",
+      "src/memory.c",
+      "-o",
+      "build/src/memory.o"
+    ],
+    "file": "src/memory.c"
+  },
+  {
+    "directory": "/workspace/c99-vectordb",
+    "arguments": [
+      "clang",
+      "@clang_options.rsp",
+      "-std=c99",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-D_GNU_SOURCE",
+      "-I",
+      "vendor",
+      "-c",
+      "src/vulkan_backend.c",
+      "-o",
+      "build/src/vulkan_backend.o"
+    ],
+    "file": "src/vulkan_backend.c"
+  },
+  {
+    "directory": "/workspace/c99-vectordb",
+    "arguments": [
+      "clang",
+      "@clang_options.rsp",
+      "-std=c99",
+      "-O3",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-D_GNU_SOURCE",
+      "-I",
+      "vendor",
+      "-c",
+      "vendor/volk.c",
+      "-o",
+      "build/vendor/volk.o"
+    ],
+    "file": "vendor/volk.c"
+  }
+]

@@ -24,13 +24,20 @@ make
 
 This will compile the C source code and the GLSL compute shader (`shaders/vdb_search.comp`) into `build/vdb` and `build/vdb_search.spv`.
 
+The primary CLI binary is `build/memo` (`build/vdb` is kept as a compatibility symlink).
+
 ## Usage
 
 Run the interactive CLI:
 
 ```bash
-./build/vdb
+./build/memo
 ```
+
+Before running, place model files in `./models/`:
+
+- `models/stories110M.bin`
+- `models/tokenizer.bin`
 
 ### Commands
 

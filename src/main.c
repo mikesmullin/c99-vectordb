@@ -4,6 +4,8 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <unistd.h>
+#include <limits.h>
 
 // Arena Declarations (implemented in memory.c)
 void Arena__Init(Arena* arena, size_t size);
@@ -27,16 +29,44 @@ LLM_VulkanCtx llm_vk_ctx;
 Tokenizer tokenizer;
 int llm_initialized = 0;
 
+static int Runtime__ChdirToWorkspaceRoot(void) {
+    char exe_path[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (n <= 0 || n >= (ssize_t)sizeof(exe_path)) {
+        return 0;
+    }
+    exe_path[n] = '\0';
+
+    char resolved[PATH_MAX];
+    if (!realpath(exe_path, resolved)) {
+        strncpy(resolved, exe_path, sizeof(resolved) - 1);
+        resolved[sizeof(resolved) - 1] = '\0';
+    }
+
+    char* slash = strrchr(resolved, '/');
+    if (!slash) return 0;
+    *slash = '\0';
+
+    slash = strrchr(resolved, '/');
+    if (!slash) return 0;
+    *slash = '\0';
+
+    if (chdir(resolved) != 0) {
+        return 0;
+    }
+    return 1;
+}
+
 void Init_LLM(Arena* arena) {
     if (llm_initialized) return;
     printf("Initializing TinyLlama 110M...\n");
-    LLM__Load("../../models/stories110M.bin", &llm_config, &llm_weights, arena);
+    LLM__Load("models/stories110M.bin", &llm_config, &llm_weights, arena);
     LLM_VulkanCtx__Init(&llm_vk_ctx);
     LLM_VulkanCtx__SetupPipeline(&llm_vk_ctx);
     LLM_VulkanCtx__UploadWeights(&llm_vk_ctx, arena->base, arena->used);
     LLM_VulkanCtx__PrepareBuffers(&llm_vk_ctx, 1024 * 1024, 1024 * 1024);
     LLM__InitState(&llm_state, &llm_config, arena);
-    Tokenizer__Init(&tokenizer, "../../models/tokenizer.bin", llm_config.vocab_size, arena);
+    Tokenizer__Init(&tokenizer, "models/tokenizer.bin", llm_config.vocab_size, arena);
     llm_initialized = 1;
     printf("LLM Initialized.\n");
 }
@@ -116,6 +146,10 @@ void TextStore_Load(TextStore* ts, const char* filename) {
 
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
+
+    if (!Runtime__ChdirToWorkspaceRoot()) {
+        fprintf(stderr, "Warning: Failed to auto-locate workspace root; using current directory.\n");
+    }
     
     printf("C99 VectorDB CLI (TinyLlama 110M Embeddings)\n");
     printf("Commands: load <file>, save <file>, memo <text>, recall <k> <text>, exit\n");
