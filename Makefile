@@ -9,23 +9,18 @@ VENDOR_DIR = vendor
 SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/vectordb.c $(SRC_DIR)/memory.c $(SRC_DIR)/vulkan_backend.c $(VENDOR_DIR)/volk.c
 OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
 TARGET = $(BUILD_DIR)/memo
-LEGACY_TARGET = $(BUILD_DIR)/vdb
-SHADER_SRC = shaders/vdb_search.comp
-SHADER_SPV = $(BUILD_DIR)/vdb_search.spv
+SHADER_SRC = shaders/memo_search.comp
+SHADER_SPV = $(BUILD_DIR)/memo_search.spv
 LLM_SHADER_SRC = shaders/headless.comp
 LLM_SHADER_SPV = $(BUILD_DIR)/headless.spv
 
 .PHONY: all clean
 
-all: $(TARGET) $(LEGACY_TARGET) $(SHADER_SPV) $(LLM_SHADER_SPV)
+all: $(TARGET) $(SHADER_SPV) $(LLM_SHADER_SPV)
 
 $(TARGET): $(OBJS)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS)
-
-$(LEGACY_TARGET): $(TARGET)
-	@mkdir -p $(BUILD_DIR)
-	ln -sf memo $(LEGACY_TARGET)
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)

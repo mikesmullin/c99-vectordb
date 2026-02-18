@@ -2,10 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <math.h>
 #include <unistd.h>
 #include <limits.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 // Arena Declarations (implemented in memory.c)
 void Arena__Init(Arena* arena, size_t size);
@@ -18,8 +19,9 @@ void Arena__Free(Arena* arena);
 #include "tokenizer.c"
 #include "inference.c"
 
-#define MAX_CMD_LEN 1024
 #define DIM 768 // TinyLlama dim
+
+int g_memo_verbose = 0;
 
 // Global LLM State
 Config llm_config;
@@ -59,7 +61,7 @@ static int Runtime__ChdirToWorkspaceRoot(void) {
 
 void Init_LLM(Arena* arena) {
     if (llm_initialized) return;
-    printf("Initializing TinyLlama 110M...\n");
+    MEMO_VLOG("Initializing TinyLlama 110M...\n");
     LLM__Load("models/stories110M.bin", &llm_config, &llm_weights, arena);
     LLM_VulkanCtx__Init(&llm_vk_ctx);
     LLM_VulkanCtx__SetupPipeline(&llm_vk_ctx);
@@ -68,7 +70,7 @@ void Init_LLM(Arena* arena) {
     LLM__InitState(&llm_state, &llm_config, arena);
     Tokenizer__Init(&tokenizer, "models/tokenizer.bin", llm_config.vocab_size, arena);
     llm_initialized = 1;
-    printf("LLM Initialized.\n");
+    MEMO_VLOG("LLM Initialized.\n");
 }
 
 void embed_text_llm(const char* text, f32* out_vec, int dim, Arena* arena) {
@@ -142,106 +144,305 @@ void TextStore_Load(TextStore* ts, const char* filename) {
     fclose(f);
 }
 
+static int TextStore_Set(TextStore* ts, int id, const char* text) {
+    if (id < 0 || id >= ts->count) return 0;
+    int len = (int)strlen(text);
+    char* str = (char*)Arena__Push(ts->arena, (size_t)len + 1);
+    strcpy(str, text);
+    ts->lines[id] = str;
+    return 1;
+}
+
+static int has_path_separator(const char* s) {
+    return (s && strchr(s, '/')) ? 1 : 0;
+}
+
+static int ensure_db_dir(void) {
+    struct stat st;
+    if (stat("db", &st) == 0) {
+        if (S_ISDIR(st.st_mode)) return 1;
+        fprintf(stderr, "Error: db exists but is not a directory\n");
+        return 0;
+    }
+    if (mkdir("db", 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Error: failed to create db directory: %s\n", strerror(errno));
+        return 0;
+    }
+    return 1;
+}
+
+static void build_db_paths(const char* base, char* index_path, size_t index_size, char* txt_path, size_t txt_size) {
+    if (has_path_separator(base)) {
+        snprintf(index_path, index_size, "%s.memo", base);
+        snprintf(txt_path, txt_size, "%s.txt", base);
+    } else {
+        snprintf(index_path, index_size, "db/%s.memo", base);
+        snprintf(txt_path, txt_size, "db/%s.txt", base);
+    }
+}
+
+static char* join_args(int start, int argc, char** argv) {
+    size_t len = 0;
+    for (int i = start; i < argc; i++) {
+        len += strlen(argv[i]);
+        if (i + 1 < argc) len += 1;
+    }
+    char* out = (char*)malloc(len + 1);
+    if (!out) return NULL;
+    out[0] = '\0';
+    for (int i = start; i < argc; i++) {
+        strcat(out, argv[i]);
+        if (i + 1 < argc) strcat(out, " ");
+    }
+    return out;
+}
+
+static int is_integer(const char* s) {
+    if (!s || !*s) return 0;
+    if (*s == '+' || *s == '-') s++;
+    if (!*s) return 0;
+    while (*s) {
+        if (*s < '0' || *s > '9') return 0;
+        s++;
+    }
+    return 1;
+}
+
+static void print_help(void) {
+    printf("Usage:\n");
+    printf("  memo [--help] [-v] [-f <file>]\n");
+    printf("  memo save [-f <file>] [-v] [<id>] <note>\n");
+    printf("  memo recall [-f <file>] [-v] [-k <N>] <query>\n");
+    printf("  memo clear [-f <file>] [-v]\n\n");
+    printf("Options:\n");
+    printf("  [-f <file>] Optional DB basename (default: db/memo)\n");
+    printf("  -v          Verbose logs to stderr\n");
+    printf("  --help      Show this help\n");
+}
+
+static int load_state(VDB_Context* ctx, TextStore* ts, const char* db_base, VDB_Index** out_index) {
+    char index_path[PATH_MAX];
+    char txt_path[PATH_MAX];
+    build_db_paths(db_base, index_path, sizeof(index_path), txt_path, sizeof(txt_path));
+
+    VDB_Index* index = VDB_Index_Create(ctx, DIM, VDB_METRIC_COSINE, 10000);
+    if (access(index_path, F_OK) == 0) {
+        VDB_Index* loaded = VDB_Index_Load(ctx, index_path);
+        if (loaded) {
+            index = loaded;
+            ts->count = 0;
+            if (access(txt_path, F_OK) == 0) {
+                TextStore_Load(ts, txt_path);
+            }
+        }
+    }
+
+    *out_index = index;
+    return 1;
+}
+
+static int save_state(VDB_Index* index, TextStore* ts, const char* db_base) {
+    if (!has_path_separator(db_base) && !ensure_db_dir()) {
+        return 0;
+    }
+    char index_path[PATH_MAX];
+    char txt_path[PATH_MAX];
+    build_db_paths(db_base, index_path, sizeof(index_path), txt_path, sizeof(txt_path));
+    VDB_Index_Save(index, index_path);
+    TextStore_Save(ts, txt_path);
+    return 1;
+}
+
+static int clear_state(const char* db_base) {
+    char index_path[PATH_MAX];
+    char txt_path[PATH_MAX];
+    int removed_any = 0;
+
+    build_db_paths(db_base, index_path, sizeof(index_path), txt_path, sizeof(txt_path));
+
+    if (unlink(index_path) == 0) removed_any = 1;
+    else if (errno != ENOENT) {
+        fprintf(stderr, "Error: failed to remove %s: %s\n", index_path, strerror(errno));
+        return 0;
+    }
+
+    if (unlink(txt_path) == 0) removed_any = 1;
+    else if (errno != ENOENT) {
+        fprintf(stderr, "Error: failed to remove %s: %s\n", txt_path, strerror(errno));
+        return 0;
+    }
+
+    if (removed_any) {
+        printf("Cleared memory database (%s, %s)\n", index_path, txt_path);
+    } else {
+        printf("Database already empty (%s, %s)\n", index_path, txt_path);
+    }
+    return 1;
+}
+
 
 
 int main(int argc, char** argv) {
-    (void)argc; (void)argv;
+    const char* db_base = "memo";
+    char* positional[64];
+    int positional_count = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-v") == 0) {
+            g_memo_verbose = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "-f") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: -f requires a value\n");
+                return 1;
+            }
+            db_base = argv[++i];
+            continue;
+        }
+        positional[positional_count++] = argv[i];
+    }
+
+    if (positional_count == 0 || strcmp(positional[0], "--help") == 0 || strcmp(positional[0], "help") == 0) {
+        print_help();
+        return 0;
+    }
 
     if (!Runtime__ChdirToWorkspaceRoot()) {
-        fprintf(stderr, "Warning: Failed to auto-locate workspace root; using current directory.\n");
+        MEMO_VLOG("Warning: Failed to auto-locate workspace root; using current directory.\n");
     }
-    
-    printf("C99 VectorDB CLI (TinyLlama 110M Embeddings)\n");
-    printf("Commands: load <file>, save <file>, memo <text>, recall <k> <text>, exit\n");
-    
-    // Init
+
+    const char* command = positional[0];
+    if (strcmp(command, "clear") == 0) {
+        if (positional_count != 1) {
+            fprintf(stderr, "Error: clear does not accept extra arguments\n");
+            return 1;
+        }
+        return clear_state(db_base) ? 0 : 1;
+    }
+
     Arena arena;
-    Arena__Init(&arena, 1024 * 1024 * 1024); // 1GB
-    
-    // Init LLM
+    Arena__Init(&arena, 1024ULL * 1024ULL * 1024ULL);
+
     Init_LLM(&arena);
-    
+
     VDB_Context ctx;
     VDB_Init(&ctx, &arena);
-    
-    VDB_Index* index = VDB_Index_Create(&ctx, DIM, VDB_METRIC_COSINE, 10000);
-    
+
     TextStore ts;
     TextStore_Init(&ts, 10000, &arena);
-    
-    char cmd_buf[MAX_CMD_LEN];
-    
-    while (1) {
-        printf("> ");
-        if (!fgets(cmd_buf, sizeof(cmd_buf), stdin)) break;
-        
-        // Remove newline
-        cmd_buf[strcspn(cmd_buf, "\n")] = 0;
-        
-        if (strncmp(cmd_buf, "exit", 4) == 0) break;
-        
-        if (strncmp(cmd_buf, "memo ", 5) == 0) {
-            char* text = cmd_buf + 5;
-            f32 vec[DIM];
-            embed_text_llm(text, vec, DIM, &arena);
-            
-            u64 id = TextStore_Add(&ts, text);
-            VDB_Index_Add(index, id, vec);
-            printf("Memorized: '%s' (ID: %lu)\n", text, id);
+
+    VDB_Index* index = NULL;
+    load_state(&ctx, &ts, db_base, &index);
+
+    if (strcmp(command, "save") == 0) {
+        if (positional_count < 2) {
+            fprintf(stderr, "Error: save requires <note> or [<id>] <note>\n");
+            Arena__Free(&arena);
+            return 1;
         }
-        else if (strncmp(cmd_buf, "recall ", 7) == 0) {
-            // Parse k
-            char* ptr = cmd_buf + 7;
-            int k = strtol(ptr, &ptr, 10);
-            while (*ptr == ' ') ptr++; // skip spaces
-            char* text = ptr;
-            
+
+        int note_start = 1;
+        int override_id = -1;
+        if (positional_count >= 3 && is_integer(positional[1])) {
+            override_id = (int)strtol(positional[1], NULL, 10);
+            note_start = 2;
+        }
+
+        char* note = join_args(note_start, positional_count, positional);
+        if (!note || note[0] == '\0') {
+            fprintf(stderr, "Error: save requires non-empty note text\n");
+            free(note);
+            Arena__Free(&arena);
+            return 1;
+        }
+
+        f32 vec[DIM];
+        embed_text_llm(note, vec, DIM, &arena);
+
+        u64 id;
+        if (override_id >= 0) {
+            if (override_id >= ts.count || override_id >= index->count) {
+                fprintf(stderr, "Error: override id %d does not exist\n", override_id);
+                free(note);
+                Arena__Free(&arena);
+                return 1;
+            }
+            TextStore_Set(&ts, override_id, note);
+            for (int j = 0; j < DIM; j++) {
+                index->vectors[override_id * DIM + j] = vec[j];
+            }
+            id = (u64)override_id;
+        } else {
+            id = TextStore_Add(&ts, note);
+            if (id == (u64)-1) {
+                fprintf(stderr, "Error: text store is full\n");
+                free(note);
+                Arena__Free(&arena);
+                return 1;
+            }
+            VDB_Index_Add(index, id, vec);
+        }
+
+        if (!save_state(index, &ts, db_base)) {
+            free(note);
+            Arena__Free(&arena);
+            return 1;
+        }
+        printf("Memorized: '%s' (ID: %lu)\n", note, id);
+        free(note);
+    } else if (strcmp(command, "recall") == 0) {
+        int k = 2;
+        int query_start = 1;
+        if (positional_count >= 4 && strcmp(positional[1], "-k") == 0) {
+            if (!is_integer(positional[2])) {
+                fprintf(stderr, "Error: -k requires an integer\n");
+                Arena__Free(&arena);
+                return 1;
+            }
+            k = (int)strtol(positional[2], NULL, 10);
+            query_start = 3;
+        }
+
+        if (query_start >= positional_count) {
+            fprintf(stderr, "Error: recall requires <query>\n");
+            Arena__Free(&arena);
+            return 1;
+        }
+        if (k < 1) k = 1;
+        if (k > 100) k = 100;
+
+        char* query = join_args(query_start, positional_count, positional);
+        if (!query || query[0] == '\0') {
+            fprintf(stderr, "Error: recall requires non-empty query\n");
+            free(query);
+            Arena__Free(&arena);
+            return 1;
+        }
+
+        printf("Top %d results for '%s':\n", k, query);
+        if (index->count > 0) {
             f32 vec[DIM];
-            embed_text_llm(text, vec, DIM, &arena);
-            
-            VDB_Result results[100]; // max k=100
-            if (k > 100) k = 100;
-            
+            embed_text_llm(query, vec, DIM, &arena);
+
+            VDB_Result results[100];
             VDB_Search(index, vec, k, results);
-            
-            printf("Top %d results for '%s':\n", k, text);
             for (int i = 0; i < k; i++) {
-                if (results[i].score < -0.9f) continue; // Empty
+                if (results[i].score < -0.9f) continue;
                 u64 id = results[i].id;
                 if (id < (u64)ts.count) {
-                    printf("  [%d] Score: %.4f | %s\n", i+1, results[i].score, ts.lines[id]);
+                    printf("  [%d] Score: %.4f | %s\n", i + 1, results[i].score, ts.lines[id]);
                 }
             }
         }
-        else if (strncmp(cmd_buf, "save ", 5) == 0) {
-            char* fname = cmd_buf + 5;
-            char vdb_fname[256]; snprintf(vdb_fname, 256, "%s.vdb", fname);
-            char txt_fname[256]; snprintf(txt_fname, 256, "%s.txt", fname);
-            
-            VDB_Index_Save(index, vdb_fname);
-            TextStore_Save(&ts, txt_fname);
-        }
-        else if (strncmp(cmd_buf, "load ", 5) == 0) {
-            char* fname = cmd_buf + 5;
-            char vdb_fname[256]; snprintf(vdb_fname, 256, "%s.vdb", fname);
-            char txt_fname[256]; snprintf(txt_fname, 256, "%s.txt", fname);
-            
-            // Reset arena? No, just load new ones. 
-            // For prototype, let's just overwrite pointers (leak old memory in arena, it's fine)
-            index = VDB_Index_Load(&ctx, vdb_fname);
-            if (index) {
-                // Re-init text store
-                ts.count = 0; // Reset count
-                TextStore_Load(&ts, txt_fname);
-            } else {
-                // Restore if failed
-                printf("Failed to load.\n");
-                // Re-create empty
-                index = VDB_Index_Create(&ctx, DIM, VDB_METRIC_COSINE, 10000);
-            }
-        }
+        free(query);
+    } else {
+        fprintf(stderr, "Error: unknown command '%s'\n", command);
+        print_help();
+        Arena__Free(&arena);
+        return 1;
     }
-    
+
     Arena__Free(&arena);
     return 0;
 }

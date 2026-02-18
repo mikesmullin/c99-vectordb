@@ -64,7 +64,7 @@ void Tokenizer__Init(Tokenizer* t, const char* filename, int vocab_size, Arena* 
     qsort(t->sorted_vocab, vocab_size, sizeof(TokenIndex), compare_token_index);
     
     fclose(file);
-    printf("Tokenizer Initialized. Vocab Size: %d\n", vocab_size);
+    MEMO_VLOG("Tokenizer Initialized. Vocab Size: %d\n", vocab_size);
 }
 
 int Tokenizer__FindToken(Tokenizer* t, const char* str) {

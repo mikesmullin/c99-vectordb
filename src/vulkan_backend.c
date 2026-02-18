@@ -5,7 +5,7 @@
 #include <string.h>
 
 // Helper macros
-#define VK_CHECK(x) do { VkResult err = x; if (err) { printf("Vulkan Error: %d\n", err); __builtin_trap(); } } while (0)
+#define VK_CHECK(x) do { VkResult err = x; if (err) { fprintf(stderr, "Vulkan Error: %d\n", err); __builtin_trap(); } } while (0)
 
 // Shader bytecode (will be loaded from file for simplicity in prototype)
 static u32* load_shader(const char* path, size_t* size) {
@@ -171,9 +171,9 @@ void Vulkan_Init(VulkanCtx* ctx) {
     
     // 8. Compute Pipeline
     size_t codeSize;
-    u32* code = load_shader("build/vdb_search.spv", &codeSize);
+    u32* code = load_shader("build/memo_search.spv", &codeSize);
     if (!code) {
-        fprintf(stderr, "Failed to load shader build/vdb_search.spv\n");
+        fprintf(stderr, "Failed to load shader build/memo_search.spv\n");
         exit(1);
     }
     
@@ -215,7 +215,7 @@ void Vulkan_Init(VulkanCtx* ctx) {
     allocInfo2.pSetLayouts = (VkDescriptorSetLayout*)&ctx->descriptor_set_layout;
     VK_CHECK(vkAllocateDescriptorSets((VkDevice)ctx->device, &allocInfo2, (VkDescriptorSet*)&ctx->descriptor_set));
     
-    printf("Vulkan Initialized.\n");
+    MEMO_VLOG("Vulkan Initialized.\n");
 }
 
 void Vulkan_PrepareBuffers(VulkanCtx* ctx, size_t index_size, size_t query_size, size_t score_size) {

@@ -117,12 +117,12 @@ void VDB_Index_Save(VDB_Index* idx, const char* filename) {
     fwrite(idx->vectors, sizeof(f32), idx->count * idx->dim, f);
     
     fclose(f);
-    printf("Saved index to %s (%d vectors)\n", filename, idx->count);
+    MEMO_VLOG("Saved index to %s (%d vectors)\n", filename, idx->count);
 }
 
 VDB_Index* VDB_Index_Load(VDB_Context* ctx, const char* filename) {
     FILE* f = fopen(filename, "rb");
-    if (!f) { perror("fopen load"); return NULL; }
+    if (!f) { return NULL; }
     
     int dim, count, metric;
     if (fread(&dim, sizeof(int), 1, f) != 1) return NULL;
@@ -137,6 +137,6 @@ VDB_Index* VDB_Index_Load(VDB_Context* ctx, const char* filename) {
     fread(idx->vectors, sizeof(f32), count * dim, f);
     
     fclose(f);
-    printf("Loaded index from %s (%d vectors)\n", filename, count);
+    MEMO_VLOG("Loaded index from %s (%d vectors)\n", filename, count);
     return idx;
 }

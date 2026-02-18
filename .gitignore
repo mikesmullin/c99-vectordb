@@ -1,8 +1,9 @@
 build/
 tmp/
-models/
+models/*
+!models/download.sh
 docs/
-*.vdb
+*.memo
 *.txt
 PROMPT.md
 .cache/

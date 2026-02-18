@@ -102,7 +102,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     (void)messageSeverity;
     (void)messageType;
     (void)pUserData;
-    fprintf(stderr, "Validation Layer: %s\n", pCallbackData->pMessage);
+    MEMO_VLOG("Validation Layer: %s\n", pCallbackData->pMessage);
     return VK_FALSE;
 }
 
@@ -174,7 +174,7 @@ void LLM_VulkanCtx__Init(LLM_VulkanCtx* ctx) {
     
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(ctx->physical_device, &props);
-    printf("Selected GPU: %s\n", props.deviceName);
+    MEMO_VLOG("Selected GPU: %s\n", props.deviceName);
 
     // 5. Find Compute Queue Family
     u32 queue_family_count = 0;
@@ -384,7 +384,7 @@ void LLM_VulkanCtx__UploadWeights(LLM_VulkanCtx* ctx, void* data, size_t size) {
     vkDestroyBuffer(ctx->device, stagingBuffer, NULL);
     vkFreeMemory(ctx->device, stagingBufferMemory, NULL);
     
-    printf("Weights uploaded to GPU (%zu bytes)\n", size);
+    MEMO_VLOG("Weights uploaded to GPU (%zu bytes)\n", size);
 }
 
 void LLM_VulkanCtx__PrepareBuffers(LLM_VulkanCtx* ctx, size_t max_input_size, size_t max_output_size) {

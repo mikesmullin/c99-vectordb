@@ -19,19 +19,19 @@ void LLM__Load(const char* checkpoint_path, Config* config, TransformerWeights* 
         __builtin_trap();
     }
 
-    printf("Model Config:\n");
-    printf("  dim: %d\n", config->dim);
-    printf("  hidden_dim: %d\n", config->hidden_dim);
-    printf("  n_layers: %d\n", config->n_layers);
-    printf("  n_heads: %d\n", config->n_heads);
-    printf("  n_kv_heads: %d\n", config->n_kv_heads);
-    printf("  vocab_size: %d\n", config->vocab_size);
-    printf("  seq_len: %d\n", config->seq_len);
+    MEMO_VLOG("Model Config:\n");
+    MEMO_VLOG("  dim: %d\n", config->dim);
+    MEMO_VLOG("  hidden_dim: %d\n", config->hidden_dim);
+    MEMO_VLOG("  n_layers: %d\n", config->n_layers);
+    MEMO_VLOG("  n_heads: %d\n", config->n_heads);
+    MEMO_VLOG("  n_kv_heads: %d\n", config->n_kv_heads);
+    MEMO_VLOG("  vocab_size: %d\n", config->vocab_size);
+    MEMO_VLOG("  seq_len: %d\n", config->seq_len);
 
     // 2. Allocate Weights in Arena
     // Helper to allocate and read
     #define ALLOC_AND_READ(ptr, count, name) \
-        printf("Reading %s (count=%d, size=%zu bytes) at offset %ld...\n", name, (int)(count), (size_t)((count) * sizeof(f32)), ftell(file)); \
+        MEMO_VLOG("Reading %s (count=%d, size=%zu bytes) at offset %ld...\n", name, (int)(count), (size_t)((count) * sizeof(f32)), ftell(file)); \
         ptr = (f32*)Arena__Push(arena, (count) * sizeof(f32)); \
         if (fread(ptr, sizeof(f32), count, file) != (size_t)(count)) { \
             fprintf(stderr, "Failed to read weights: %s. Expected %zu bytes.\n", name, (size_t)((count) * sizeof(f32))); \
@@ -58,18 +58,18 @@ void LLM__Load(const char* checkpoint_path, Config* config, TransformerWeights* 
     fseek(file, current_pos, SEEK_SET);
     
     long remaining = file_size - current_pos;
-    printf("File position: %ld, File size: %ld, Remaining: %ld\n", current_pos, file_size, remaining);
+    MEMO_VLOG("File position: %ld, File size: %ld, Remaining: %ld\n", current_pos, file_size, remaining);
 
     size_t wcls_size = config->vocab_size * config->dim * sizeof(f32);
     if (remaining >= (long)wcls_size) {
         ALLOC_AND_READ(weights->wcls, config->vocab_size * config->dim, "wcls");
     } else {
-        printf("Remaining bytes (%ld) insufficient for wcls (%zu). Using shared weights.\n", remaining, wcls_size);
+        MEMO_VLOG("Remaining bytes (%ld) insufficient for wcls (%zu). Using shared weights.\n", remaining, wcls_size);
         weights->wcls = weights->token_embedding_table;
     }
 
     fclose(file);
-    printf("Model Loaded Successfully.\n");
+    MEMO_VLOG("Model Loaded Successfully.\n");
 }
 
 void LLM__InitState(RunState* s, Config* p, Arena* arena) {

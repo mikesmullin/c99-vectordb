@@ -1,108 +1,78 @@
-# memo (C99 VectorDB) — Agent Skill Guide
+# memo — Usage Guide for AI Agents
 
-This guide tells AI agents how to use the `memo` tool in this workspace.
+`memo` is a lightweight vector database for agents to store and recall important facts as long-term memory.
 
-## What this project is
+## Command help (actual output)
 
-- A C99 interactive CLI that stores/retrieves text memories using embedding similarity search.
-- Binary name: `memo`.
-- GPU backend: Vulkan compute shaders.
-- Main commands inside CLI:
-  - `memo <text>`
-  - `recall <k> <text>`
-  - `save <name>`
-  - `load <name>`
-  - `exit`
+```text
+Usage:
+  memo [--help] [-v] [-f <file>]
+  memo save [-f <file>] [-v] [<id>] <note>
+  memo recall [-f <file>] [-v] [-k <N>] <query>
+  memo clear [-f <file>] [-v]
 
-## Workspace assumptions
-
-- Workspace root contains:
-  - `Makefile`
-  - `src/`
-  - `shaders/`
-  - `models/`
-- `models/` must contain:
-  - `stories110M.bin` (large; typically symlinked)
-  - `tokenizer.bin` (small; copied locally)
-
-## Build
-
-From workspace root:
-
-```bash
-make
+Options:
+  [-f <file>] Optional DB basename (default: db/memo)
+  -v          Verbose logs to stderr
+  --help      Show this help
 ```
 
-Expected outputs:
+## Core behavior
 
-- `build/memo` (primary)
-- `build/vdb` (compat symlink)
-- `build/vdb_search.spv`
-- `build/headless.spv`
+- `memo` or `memo --help` prints help.
+- `memo save <note>` stores a new memory.
+- `memo save <id> <note>` overwrites memory at an existing ID.
+- `memo recall <query>` recalls top matches (default `k=2`).
+- `memo recall -k <N> <query>` recalls top `N` matches (`N` capped at 100).
+- `memo clear` wipes the current memory DB files.
+- `-f <file>` is optional and changes DB basename (default files are under `db/`).
+- `-v` enables debug/initialization logs on stderr only.
 
-## Install into PATH
+## Real examples (actual commands + output)
 
-Use a symlink so runtime path auto-detection resolves back to this workspace build directory:
-
-```bash
-mkdir -p ~/.local/bin
-ln -sfn /workspace/c99-vectordb/build/memo ~/.local/bin/memo
-```
-
-## Run
-
-You can run from any current directory after installation:
+### Save and recall
 
 ```bash
-memo
+$ memo save my name is Bob
+Memorized: 'my name is Bob' (ID: 0)
+
+$ memo save cake is for birthdays
+Memorized: 'cake is for birthdays' (ID: 1)
+
+$ memo save carrots are orange
+Memorized: 'carrots are orange' (ID: 2)
+
+$ memo recall -k 2 party food
+Top 2 results for 'party food':
+  [1] Score: 0.3026 | cake is for birthdays
+  [2] Score: 0.2987 | carrots are orange
 ```
 
-For non-interactive execution:
+### Overwrite an existing memory by ID
 
 ```bash
-printf 'memo my name is Bob\nrecall 1 bob\nexit\n' | memo
+$ memo save 1 cake is for celebrations
+Memorized: 'cake is for celebrations' (ID: 1)
+
+$ memo recall -k 2 party food
+Top 2 results for 'party food':
+  [1] Score: 0.3266 | cake is for celebrations
+  [2] Score: 0.2987 | carrots are orange
+
+$ memo clear
+Cleared memory database (db/memo.memo, db/memo.txt)
 ```
 
-## Why global run works
+## Output contract
 
-- On startup, `memo` resolves the real executable path via `/proc/self/exe`.
-- It derives workspace root from `<workspace>/build/memo`.
-- It then loads runtime files relative to workspace root (`models/*`, `build/*.spv`).
+- Normal mode: only final subcommand result goes to stdout.
+- Verbose mode (`-v`): extra debug/startup info goes to stderr.
 
-## Dependency policy
+## Fast usage patterns
 
-If dependencies are outside this workspace:
-
-- Copy small files into workspace.
-- For large files, create symlinks under `models/`.
-- Keep `models/` out of git (already in `.gitignore`).
-
-## Quick verification flow
-
-```bash
-cd /workspace/c99-vectordb
-make
-printf 'memo my name is Bob\nmemo cake is for birthdays\nmemo carrots are orange\nrecall 2 party food\nexit\n' | ./build/memo
-```
-
-Expected recall top matches include:
-
-- `cake is for birthdays`
-- `carrots are orange`
-
-## Common failure modes
-
-- `Failed to open model file: models/stories110M.bin`
-  - `models/` is missing or symlink target missing.
-- `Failed to open shader file: ...`
-  - Build artifacts not present; run `make`.
-- Vulkan initialization errors
-  - Missing Vulkan runtime/driver support on host.
-
-## Agent operating checklist
-
-1. Ensure `models/` exists and required files resolve.
-2. Run `make` from workspace root.
-3. Verify `build/memo` exists.
-4. Run a short stdin script through `memo`.
-5. If installing globally, ensure `~/.local/bin/memo` is a symlink to workspace `build/memo`.
+- Default DB (recommended):
+  - `memo save remember this`
+  - `memo recall remember`
+- Optional custom DB path with `-f`:
+  - `memo -f /tmp/memo_test save hello world`
+  - `memo -f /tmp/memo_test recall hello`

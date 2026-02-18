@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 // Fixed-width types
 typedef uint8_t  u8;
@@ -22,6 +23,9 @@ typedef double   f64;
 // Common Macros
 #define ASSERT(c) if (!(c)) { __builtin_trap(); }
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
+extern int g_memo_verbose;
+#define MEMO_VLOG(...) do { if (g_memo_verbose) fprintf(stderr, __VA_ARGS__); } while (0)
 
 // Arena Allocator
 typedef struct {
