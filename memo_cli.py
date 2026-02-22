@@ -225,6 +225,16 @@ def get_existing_ids(index: faiss.IndexIDMap2) -> set[int]:
     return set(int(x) for x in arr.tolist())
 
 
+def rebuild_index_from_texts(texts: list[str | None], verbose: bool) -> faiss.IndexIDMap2:
+    idx = create_index()
+    for doc_id, text in enumerate(texts):
+        note = text or ""
+        vec = embed_text_hash(note)
+        idx.add_with_ids(vec.reshape(1, -1), np.array([doc_id], dtype=np.int64))
+    vlog(verbose, f"Rebuilt index with {len(texts)} vectors")
+    return idx
+
+
 def search_all(index: faiss.IndexIDMap2, query_vec: np.ndarray) -> list[Result]:
     if index.ntotal == 0:
         return []
@@ -312,11 +322,11 @@ def command_save(db_base: str, save_yaml_path: str, user_cwd: str, verbose: bool
 
     index = load_index(index_path, verbose)
     existing_ids = get_existing_ids(index)
+    had_overwrite = False
 
     for entry in entries:
         note = entry["body"]
         raw_meta = metadata_to_raw(entry.get("metadata"))
-        vec = embed_text_hash(note)
 
         override_id = entry.get("id")
         if override_id is not None:
@@ -324,19 +334,20 @@ def command_save(db_base: str, save_yaml_path: str, user_cwd: str, verbose: bool
                 print(f"Error: override id {override_id} does not exist", file=sys.stderr)
                 return 1
 
-            remove_vec = np.array([override_id], dtype=np.int64)
-            index.remove_ids(remove_vec)
-            index.add_with_ids(vec.reshape(1, -1), np.array([override_id], dtype=np.int64))
-
             texts[override_id] = note
             metas[override_id] = raw_meta
+            had_overwrite = True
             print(f"Memorized: '{note}' (ID: {override_id})")
         else:
             new_id = len(texts)
+            vec = embed_text_hash(note)
             index.add_with_ids(vec.reshape(1, -1), np.array([new_id], dtype=np.int64))
             texts.append(note)
             metas.append(raw_meta)
             print(f"Memorized: '{note}' (ID: {new_id})")
+
+    if had_overwrite:
+        index = rebuild_index_from_texts(texts, verbose)
 
     ensure_parent_dir(index_path)
     ensure_parent_dir(txt_path)
