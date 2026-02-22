@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import math
+from collections import Counter
+from datetime import datetime
 import os
 import re
-import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +34,7 @@ def has_path_separator(s: str) -> bool:
     return "/" in s
 
 
-def build_db_paths(base: str, user_cwd: str) -> tuple[Path, Path, Path]:
+def build_db_paths(base: str, user_cwd: str) -> tuple[Path, Path]:
     if has_path_separator(base):
         if base.startswith("/"):
             prefix = Path(base)
@@ -44,6 +44,19 @@ def build_db_paths(base: str, user_cwd: str) -> tuple[Path, Path, Path]:
         prefix = Path(user_cwd) / base
     return (
         prefix.with_suffix(".memo"),
+        prefix.with_suffix(".yaml"),
+    )
+
+
+def build_legacy_db_paths(base: str, user_cwd: str) -> tuple[Path, Path]:
+    if has_path_separator(base):
+        if base.startswith("/"):
+            prefix = Path(base)
+        else:
+            prefix = Path(user_cwd) / base
+    else:
+        prefix = Path(user_cwd) / base
+    return (
         prefix.with_suffix(".txt"),
         prefix.with_suffix(".meta"),
     )
@@ -54,37 +67,69 @@ def ensure_parent_dir(file_path: Path) -> None:
     parent.mkdir(parents=True, exist_ok=True)
 
 
-def save_binary_string_table(path: Path, values: list[str | None]) -> None:
-    with path.open("wb") as f:
-        f.write(struct.pack("<i", len(values)))
-        for value in values:
-            payload = (value or "").encode("utf-8")
-            f.write(struct.pack("<i", len(payload)))
-            if payload:
-                f.write(payload)
-
-
-def load_binary_string_table(path: Path) -> list[str | None]:
+def load_yaml_tables(path: Path) -> tuple[list[str], list[dict[str, Any] | None]]:
     if not path.exists():
-        return []
-    out: list[str | None] = []
-    with path.open("rb") as f:
-        count_raw = f.read(4)
-        if len(count_raw) != 4:
-            return out
-        count = struct.unpack("<i", count_raw)[0]
-        for _ in range(max(0, count)):
-            len_raw = f.read(4)
-            if len(len_raw) != 4:
-                break
-            n = struct.unpack("<i", len_raw)[0]
-            if n < 0:
-                n = 0
-            data = f.read(n)
-            if len(data) != n:
-                break
-            out.append(data.decode("utf-8") if n > 0 else None)
-    return out
+        return [], []
+
+    docs = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    parsed_docs = [doc for doc in docs if doc is not None]
+    if not parsed_docs:
+        return [], []
+
+    ids_seen: set[int] = set()
+    max_id = -1
+    normalized: list[dict[str, Any]] = []
+
+    for doc in parsed_docs:
+        if not isinstance(doc, dict):
+            raise ValueError("database YAML entries must be mappings")
+        if "id" not in doc or "body" not in doc:
+            raise ValueError("database YAML entries require 'id' and 'body'")
+
+        doc_id = doc["id"]
+        body = doc["body"]
+        metadata = doc.get("metadata")
+
+        if not isinstance(doc_id, int) or doc_id < 0:
+            raise ValueError("database YAML entry 'id' must be a non-negative integer")
+        if doc_id in ids_seen:
+            raise ValueError(f"database YAML has duplicate id {doc_id}")
+        if not isinstance(body, str):
+            raise ValueError(f"database YAML entry body for id {doc_id} must be a string")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ValueError(f"database YAML entry metadata for id {doc_id} must be a mapping")
+
+        ids_seen.add(doc_id)
+        max_id = max(max_id, doc_id)
+        normalized.append({"id": doc_id, "body": body, "metadata": metadata})
+
+    texts = [""] * (max_id + 1)
+    metas: list[dict[str, Any] | None] = [None] * (max_id + 1)
+    for rec in normalized:
+        rid = rec["id"]
+        texts[rid] = rec["body"]
+        metas[rid] = rec["metadata"]
+
+    return texts, metas
+
+
+def save_yaml_tables(path: Path, texts: list[str], metas: list[dict[str, Any] | None]) -> None:
+    docs: list[dict[str, Any]] = []
+    for doc_id, body in enumerate(texts):
+        rec: dict[str, Any] = {
+            "id": doc_id,
+            "metadata": metas[doc_id] if doc_id < len(metas) and metas[doc_id] is not None else {},
+            "body": body,
+        }
+        docs.append(rec)
+
+    payload = yaml.safe_dump_all(
+        docs,
+        explicit_start=True,
+        sort_keys=False,
+        allow_unicode=True,
+    )
+    path.write_text(payload, encoding="utf-8")
 
 
 def normalize(v: np.ndarray) -> np.ndarray:
@@ -112,15 +157,6 @@ def parse_yaml_flow_map(expr: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("filter expression must parse to a YAML mapping")
     return parsed
-
-
-def raw_meta_to_map(raw_meta: str | None) -> dict[str, Any]:
-    if raw_meta is None or raw_meta.strip() == "":
-        return {}
-    parsed = yaml.safe_load(raw_meta)
-    if parsed is None:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def compare_values(lhs: Any, rhs: Any) -> int:
@@ -188,15 +224,6 @@ def matches_filter(data: dict[str, Any], filt: dict[str, Any]) -> bool:
     return True
 
 
-def metadata_to_raw(meta: Any) -> str | None:
-    if meta is None:
-        return None
-    if not isinstance(meta, dict):
-        raise ValueError("metadata must be a YAML mapping")
-    dumped = yaml.safe_dump(meta, default_flow_style=True, sort_keys=False).strip()
-    return dumped if dumped else None
-
-
 def create_index() -> faiss.IndexIDMap2:
     base = faiss.IndexHNSWFlat(DIM, 32)
     base.hnsw.efConstruction = 200
@@ -256,9 +283,10 @@ def print_recall_result_multiline(rank: int, score: float, text: str) -> None:
 
 
 def command_clean(db_base: str, user_cwd: str) -> int:
-    index_path, txt_path, meta_path = build_db_paths(db_base, user_cwd)
+    index_path, yaml_path = build_db_paths(db_base, user_cwd)
+    legacy_txt_path, legacy_meta_path = build_legacy_db_paths(db_base, user_cwd)
     removed_any = False
-    for p in (index_path, txt_path, meta_path):
+    for p in (index_path, yaml_path, legacy_txt_path, legacy_meta_path):
         try:
             p.unlink()
             removed_any = True
@@ -269,9 +297,15 @@ def command_clean(db_base: str, user_cwd: str) -> int:
             return 1
 
     if removed_any:
-        print(f"Cleared memory database ({index_path}, {txt_path}, {meta_path})")
+        print(
+            "Cleared memory database "
+            f"({index_path}, {yaml_path}, {legacy_txt_path}, {legacy_meta_path})"
+        )
     else:
-        print(f"Database already empty ({index_path}, {txt_path}, {meta_path})")
+        print(
+            "Database already empty "
+            f"({index_path}, {yaml_path}, {legacy_txt_path}, {legacy_meta_path})"
+        )
     return 0
 
 
@@ -310,15 +344,17 @@ def parse_save_yaml_file(path: Path) -> list[dict[str, Any]]:
 
 
 def command_save(db_base: str, save_yaml_path: str, user_cwd: str, verbose: bool) -> int:
-    index_path, txt_path, meta_path = build_db_paths(db_base, user_cwd)
+    index_path, yaml_path = build_db_paths(db_base, user_cwd)
     entries = parse_save_yaml_file(Path(save_yaml_path))
 
-    texts = load_binary_string_table(txt_path)
-    metas = load_binary_string_table(meta_path)
+    try:
+        texts, metas = load_yaml_tables(yaml_path)
+    except Exception as e:
+        print(f"Error: failed to load database YAML '{yaml_path}': {e}", file=sys.stderr)
+        return 1
+
     if len(metas) < len(texts):
         metas.extend([None] * (len(texts) - len(metas)))
-    elif len(texts) < len(metas):
-        texts.extend([""] * (len(metas) - len(texts)))
 
     index = load_index(index_path, verbose)
     existing_ids = get_existing_ids(index)
@@ -326,7 +362,7 @@ def command_save(db_base: str, save_yaml_path: str, user_cwd: str, verbose: bool
 
     for entry in entries:
         note = entry["body"]
-        raw_meta = metadata_to_raw(entry.get("metadata"))
+        metadata = entry.get("metadata")
 
         override_id = entry.get("id")
         if override_id is not None:
@@ -335,7 +371,7 @@ def command_save(db_base: str, save_yaml_path: str, user_cwd: str, verbose: bool
                 return 1
 
             texts[override_id] = note
-            metas[override_id] = raw_meta
+            metas[override_id] = metadata
             had_overwrite = True
             print(f"Memorized: '{note}' (ID: {override_id})")
         else:
@@ -343,29 +379,28 @@ def command_save(db_base: str, save_yaml_path: str, user_cwd: str, verbose: bool
             vec = embed_text_hash(note)
             index.add_with_ids(vec.reshape(1, -1), np.array([new_id], dtype=np.int64))
             texts.append(note)
-            metas.append(raw_meta)
+            metas.append(metadata)
             print(f"Memorized: '{note}' (ID: {new_id})")
 
     if had_overwrite:
         index = rebuild_index_from_texts(texts, verbose)
 
     ensure_parent_dir(index_path)
-    ensure_parent_dir(txt_path)
-    ensure_parent_dir(meta_path)
+    ensure_parent_dir(yaml_path)
 
     faiss.write_index(index, str(index_path))
-    save_binary_string_table(txt_path, texts)
-    save_binary_string_table(meta_path, metas)
+    save_yaml_tables(yaml_path, texts, metas)
     return 0
 
 
 def command_recall(db_base: str, query: str, k: int, filter_expr: str | None, user_cwd: str) -> int:
-    index_path, txt_path, meta_path = build_db_paths(db_base, user_cwd)
+    index_path, yaml_path = build_db_paths(db_base, user_cwd)
 
-    texts = load_binary_string_table(txt_path)
-    metas = load_binary_string_table(meta_path)
-    if len(metas) < len(texts):
-        metas.extend([None] * (len(texts) - len(metas)))
+    try:
+        texts, metas = load_yaml_tables(yaml_path)
+    except Exception as e:
+        print(f"Error: failed to load database YAML '{yaml_path}': {e}", file=sys.stderr)
+        return 1
 
     index = load_index(index_path, verbose=False)
 
@@ -396,7 +431,7 @@ def command_recall(db_base: str, query: str, k: int, filter_expr: str | None, us
             continue
 
         if active_filter is not None:
-            record = raw_meta_to_map(metas[doc_id] if doc_id < len(metas) else None)
+            record = metas[doc_id] if doc_id < len(metas) and metas[doc_id] is not None else {}
             if not record:
                 continue
             if not matches_filter(record, active_filter):
@@ -409,11 +444,179 @@ def command_recall(db_base: str, query: str, k: int, filter_expr: str | None, us
     return 0
 
 
+def parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def resolve_field_value(doc_id: int, metadata: dict[str, Any], field: str) -> Any:
+    if field == "id":
+        return doc_id
+    if field == "metadata":
+        return metadata
+    key = field[len("metadata.") :] if field.startswith("metadata.") else field
+    return metadata.get(key)
+
+
+def format_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return yaml.safe_dump(value, default_flow_style=True, sort_keys=False).strip()
+    return str(value)
+
+
+def default_analyze_fields(matches: list[tuple[int, dict[str, Any]]]) -> list[str]:
+    keys: set[str] = set()
+    for _, metadata in matches:
+        keys.update(str(k) for k in metadata.keys())
+    extra = sorted(keys)[:3]
+    return ["id", *extra]
+
+
+def print_table(headers: list[str], rows: list[list[str]]) -> None:
+    if not headers:
+        return
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(cell))
+
+    print("  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)))
+    for row in rows:
+        print("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
+
+
+def print_stats(matches: list[tuple[int, dict[str, Any]]], key: str) -> None:
+    values: list[Any] = []
+    for doc_id, metadata in matches:
+        value = resolve_field_value(doc_id, metadata, key)
+        if value is not None:
+            values.append(value)
+
+    counter: Counter[str] = Counter(format_cell(v) for v in values)
+    print(f"Key: {key}")
+    print(f"Cardinality (distinct values): {len(counter)}")
+    print("Cardinality by value:")
+    top = counter.most_common(4)
+    for name, count in top:
+        print(f"  {name}: {count}")
+    if len(counter) > 4:
+        other = sum(counter.values()) - sum(c for _, c in top)
+        print(f"  other (aggregate of {len(counter) - 4} additional values): {other}")
+
+    if values:
+        numeric: list[float] = []
+        numeric_ok = True
+        for value in values:
+            if isinstance(value, (int, float)):
+                numeric.append(float(value))
+                continue
+            try:
+                numeric.append(float(str(value)))
+            except (ValueError, TypeError):
+                numeric_ok = False
+                break
+
+        if numeric_ok and numeric:
+            avg = sum(numeric) / len(numeric)
+            print("Range (numeric):")
+            print(f"  min: {min(numeric):g}")
+            print(f"  max: {max(numeric):g}")
+            print(f"  avg: {avg:.2f}")
+            return
+
+        dates: list[datetime] = []
+        date_ok = True
+        for value in values:
+            parsed = parse_iso_datetime(value)
+            if parsed is None:
+                date_ok = False
+                break
+            dates.append(parsed)
+        if date_ok and dates:
+            start = min(dates)
+            end = max(dates)
+            print("Range (date-like):")
+            print(f"  start: {start.date().isoformat()}")
+            print(f"  end:   {end.date().isoformat()}")
+
+
+def command_analyze(
+    db_base: str,
+    filter_expr: str,
+    fields: list[str] | None,
+    stats_key: str | None,
+    limit: int,
+    offset: int,
+    user_cwd: str,
+) -> int:
+    if not filter_expr.strip():
+        print("Error: analyze requires --filter <expr>", file=sys.stderr)
+        return 1
+    if limit < 1:
+        print("Error: --limit must be >= 1", file=sys.stderr)
+        return 1
+    if offset < 0:
+        print("Error: --offset must be >= 0", file=sys.stderr)
+        return 1
+
+    _, yaml_path = build_db_paths(db_base, user_cwd)
+    try:
+        texts, metas = load_yaml_tables(yaml_path)
+    except Exception as e:
+        print(f"Error: failed to load database YAML '{yaml_path}': {e}", file=sys.stderr)
+        return 1
+
+    try:
+        active_filter = parse_yaml_flow_map(filter_expr)
+    except Exception as e:
+        print(f"Error: invalid --filter expression: {e}", file=sys.stderr)
+        return 1
+
+    matches: list[tuple[int, dict[str, Any]]] = []
+    for doc_id in range(len(texts)):
+        metadata = metas[doc_id] if doc_id < len(metas) and metas[doc_id] is not None else {}
+        if not metadata:
+            continue
+        if matches_filter(metadata, active_filter):
+            matches.append((doc_id, metadata))
+
+    print(f"Matched: {len(matches)}")
+    if stats_key is not None:
+        print_stats(matches, stats_key)
+        return 0
+
+    selected_fields = fields if fields else default_analyze_fields(matches)
+    if not selected_fields:
+        selected_fields = ["id"]
+
+    page = matches[offset : offset + limit]
+    rows: list[list[str]] = []
+    for doc_id, metadata in page:
+        row = [format_cell(resolve_field_value(doc_id, metadata, field)) for field in selected_fields]
+        rows.append(row)
+
+    headers = ["ID" if field == "id" else field for field in selected_fields]
+    print_table(headers, rows)
+    return 0
+
+
 def print_help() -> None:
     print("Usage:")
     print("  memo [--help] [-v] [-f <file>]")
     print("  memo save [-f <file>] [-v] <yaml_file>")
     print("  memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>")
+    print("  memo analyze [-f <file>] [-v] --filter <expr> [--fields <list>] [--stats <key>] [--limit <N>] [--offset <N>]")
     print("  memo clean [-f <file>] [-v>")
     print()
     print("Options:")
@@ -423,13 +626,16 @@ def print_help() -> None:
     print("                     Each doc requires: metadata: <map>, body: <string>")
     print("                     Optional per-doc id: <int> to overwrite existing record")
     print("  --filter <expr>    Filter recall results by metadata")
+    print("  --fields <list>    analyze only: comma-separated columns (e.g. id,source,metadata)")
+    print("  --stats <key>      analyze only: cardinality + numeric/date-like range for key")
+    print("  --limit <N>        analyze only: max rows to print (default: 100)")
+    print("  --offset <N>       analyze only: rows to skip before printing (default: 0)")
     print("  --help             Show this help")
 
 
 def parse_args(argv: list[str]) -> tuple[dict[str, Any], int]:
     db_base = DEFAULT_DB
     verbose = False
-    filter_expr: str | None = None
     positional: list[str] = []
 
     i = 1
@@ -446,21 +652,132 @@ def parse_args(argv: list[str]) -> tuple[dict[str, Any], int]:
             db_base = argv[i + 1]
             i += 2
             continue
-        if arg == "--filter":
-            if i + 1 >= len(argv):
-                print("Error: --filter requires a filter expression", file=sys.stderr)
-                return {}, 1
-            filter_expr = argv[i + 1]
-            i += 2
-            continue
         positional.append(arg)
         i += 1
 
     return {
         "db_base": db_base,
         "verbose": verbose,
-        "filter_expr": filter_expr,
         "positional": positional,
+    }, 0
+
+
+def parse_recall_args(args: list[str]) -> tuple[dict[str, Any], int]:
+    k = 2
+    filter_expr: str | None = None
+    query_parts: list[str] = []
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "-k":
+            if i + 1 >= len(args):
+                print("Error: -k requires an integer", file=sys.stderr)
+                return {}, 1
+            try:
+                k = int(args[i + 1])
+            except ValueError:
+                print("Error: -k requires an integer", file=sys.stderr)
+                return {}, 1
+            i += 2
+            continue
+        if arg == "--filter":
+            if i + 1 >= len(args):
+                print("Error: --filter requires a filter expression", file=sys.stderr)
+                return {}, 1
+            filter_expr = args[i + 1]
+            i += 2
+            continue
+        query_parts.append(arg)
+        i += 1
+
+    query = " ".join(query_parts).strip()
+    if not query:
+        print("Error: recall requires <query>", file=sys.stderr)
+        return {}, 1
+
+    if k < 1:
+        k = 1
+    if k > MAX_K:
+        k = MAX_K
+
+    return {"k": k, "filter_expr": filter_expr, "query": query}, 0
+
+
+def parse_analyze_args(args: list[str]) -> tuple[dict[str, Any], int]:
+    filter_expr: str | None = None
+    fields: list[str] | None = None
+    stats_key: str | None = None
+    limit = 100
+    offset = 0
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--filter":
+            if i + 1 >= len(args):
+                print("Error: --filter requires a filter expression", file=sys.stderr)
+                return {}, 1
+            filter_expr = args[i + 1]
+            i += 2
+            continue
+        if arg == "--fields":
+            if i + 1 >= len(args):
+                print("Error: --fields requires a comma-separated field list", file=sys.stderr)
+                return {}, 1
+            parsed_fields = [f.strip() for f in args[i + 1].split(",") if f.strip()]
+            if not parsed_fields:
+                print("Error: --fields requires at least one field", file=sys.stderr)
+                return {}, 1
+            fields = parsed_fields
+            i += 2
+            continue
+        if arg == "--stats":
+            if i + 1 >= len(args):
+                print("Error: --stats requires a key", file=sys.stderr)
+                return {}, 1
+            stats_key = args[i + 1].strip()
+            if not stats_key:
+                print("Error: --stats requires a non-empty key", file=sys.stderr)
+                return {}, 1
+            i += 2
+            continue
+        if arg == "--limit":
+            if i + 1 >= len(args):
+                print("Error: --limit requires an integer", file=sys.stderr)
+                return {}, 1
+            try:
+                limit = int(args[i + 1])
+            except ValueError:
+                print("Error: --limit requires an integer", file=sys.stderr)
+                return {}, 1
+            i += 2
+            continue
+        if arg == "--offset":
+            if i + 1 >= len(args):
+                print("Error: --offset requires an integer", file=sys.stderr)
+                return {}, 1
+            try:
+                offset = int(args[i + 1])
+            except ValueError:
+                print("Error: --offset requires an integer", file=sys.stderr)
+                return {}, 1
+            i += 2
+            continue
+
+        print(f"Error: unknown analyze option '{arg}'", file=sys.stderr)
+        return {}, 1
+
+    if filter_expr is None:
+        print("Error: analyze requires --filter <expr>", file=sys.stderr)
+        return {}, 1
+
+    return {
+        "filter_expr": filter_expr,
+        "fields": fields,
+        "stats_key": stats_key,
+        "limit": limit,
+        "offset": offset,
     }, 0
 
 
@@ -478,7 +795,6 @@ def main() -> int:
     command = positional[0]
     db_base = parsed["db_base"]
     verbose = parsed["verbose"]
-    filter_expr = parsed["filter_expr"]
 
     if command == "clean":
         if len(positional) != 1:
@@ -487,40 +803,36 @@ def main() -> int:
         return command_clean(db_base, user_cwd)
 
     if command == "save":
-        if filter_expr is not None:
-            print("Error: --filter is only valid with recall", file=sys.stderr)
-            return 1
         if len(positional) != 2:
             print("Error: save requires exactly one <yaml_file>", file=sys.stderr)
             return 1
         return command_save(db_base, positional[1], user_cwd, verbose)
 
     if command == "recall":
-        k = 2
-        query_start = 1
-        if len(positional) >= 4 and positional[1] == "-k":
-            try:
-                k = int(positional[2])
-            except ValueError:
-                print("Error: -k requires an integer", file=sys.stderr)
-                return 1
-            query_start = 3
+        recall_args, recall_rc = parse_recall_args(positional[1:])
+        if recall_rc != 0:
+            return recall_rc
+        return command_recall(
+            db_base,
+            recall_args["query"],
+            recall_args["k"],
+            recall_args["filter_expr"],
+            user_cwd,
+        )
 
-        if query_start >= len(positional):
-            print("Error: recall requires <query>", file=sys.stderr)
-            return 1
-
-        if k < 1:
-            k = 1
-        if k > MAX_K:
-            k = MAX_K
-
-        query = " ".join(positional[query_start:]).strip()
-        if not query:
-            print("Error: recall requires non-empty query", file=sys.stderr)
-            return 1
-
-        return command_recall(db_base, query, k, filter_expr, user_cwd)
+    if command == "analyze":
+        analyze_args, analyze_rc = parse_analyze_args(positional[1:])
+        if analyze_rc != 0:
+            return analyze_rc
+        return command_analyze(
+            db_base,
+            analyze_args["filter_expr"],
+            analyze_args["fields"],
+            analyze_args["stats_key"],
+            analyze_args["limit"],
+            analyze_args["offset"],
+            user_cwd,
+        )
 
     print(f"Error: unknown command '{command}'", file=sys.stderr)
     print_help()

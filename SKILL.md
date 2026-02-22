@@ -9,6 +9,7 @@ Usage:
   memo [--help] [-v] [-f <file>]
   memo save [-f <file>] [-v] <yaml_file>
   memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>
+  memo analyze [-f <file>] [-v] --filter <expr> [--fields <list>] [--stats <key>] [--limit <N>] [--offset <N>]
   memo clean [-f <file>] [-v]
 
 Options:
@@ -33,6 +34,9 @@ Options:
 - `memo recall <query>` recalls top matches (default `k=2`).
 - `memo recall -k <N> <query>` recalls top `N` matches (`N` capped at 100).
 - `memo recall --filter '<expr>' <query>` filters on metadata using YAML-flow expressions/operators.
+- `memo analyze --filter '<expr>'` runs metadata-only analysis (no semantic query).
+- `memo analyze --stats <key>` prints cardinality and numeric/date-like range summaries.
+- `memo analyze --fields id,source,...` projects metadata rows without body text.
 - `memo clean` wipes the current DB files (`.memo`, `.txt`, `.meta`).
 - `-f <file>` changes DB basename; relative paths resolve from process CWD.
 - `-v` enables verbose logs to stderr only.
@@ -99,11 +103,20 @@ Top 3 results for 'what do I know about myself':
       I am allergic to peanuts.
 ```
 
+### Analyze
+
+```bash
+$ memo analyze --filter '{source: user}' --fields id,source,category
+Matched: 1
+ID  source  category
+0   user    health
+```
+
 ### Clean
 
 ```bash
 $ memo clean
-Cleared memory database (memo.memo, memo.txt, memo.meta)
+Cleared memory database (memo.memo, memo.yaml, memo.txt, memo.meta)
 ```
 
 ## Output contract
@@ -120,11 +133,12 @@ Cleared memory database (memo.memo, memo.txt, memo.meta)
 - No stdin save mode (`memo save -`).
 - No `-m` / `-i` interleaved batch mode.
 - YAML file input is required for all saves.
+- Runtime storage uses `.memo + .yaml`.
 
 ## Metadata filtering (embedded reference)
 
 `memo recall --filter '<expr>' <query>` applies deterministic metadata filtering
-before vector search scoring.
+before showing semantic results.
 
 ### Metadata shape (save YAML)
 

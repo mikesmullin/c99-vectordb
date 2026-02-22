@@ -32,6 +32,7 @@ Or run directly with wrapper:
 memo [--help] [-v] [-f <file>]
 memo save [-f <file>] [-v] <yaml_file>
 memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>
+memo analyze [-f <file>] [-v] --filter <expr> [--fields <list>] [--stats <key>] [--limit <N>] [--offset <N>]
 memo clean [-f <file>] [-v]
 ```
 
@@ -76,5 +77,37 @@ body: Updated note for id 3
 Given default db basename `memo` in current working directory:
 
 - `memo.memo` (FAISS index)
-- `memo.txt` (binary text sidecar)
-- `memo.meta` (binary metadata sidecar)
+- `memo.yaml` (human-readable records)
+
+## Analyze metadata
+
+Use `analyze` for metadata-only workflows (no semantic embedding/search path):
+
+```bash
+memo analyze --filter '{source: user}'
+memo analyze --filter '{source: user}' --fields id,source,rule,ts
+memo analyze --filter '{source: user}' --stats rule
+memo analyze --filter '{source: user}' --limit 100 --offset 0
+```
+
+Notes:
+
+- `--filter` is required.
+- `--fields` supports `id`, `metadata`, and metadata keys (for example `source` or `metadata.source`).
+- `--stats <key>` prints cardinality and range summary (numeric/date-like when parseable).
+
+## One-time migration from legacy sidecars
+
+Runtime now uses only `.memo + .yaml` and does not parse legacy `.txt/.meta` files.
+
+Use the one-time migration script for old DBs:
+
+```bash
+python tmp/migrate_legacy_to_yaml.py memo
+```
+
+Optional overwrite if `memo.yaml` already exists:
+
+```bash
+python tmp/migrate_legacy_to_yaml.py memo --force
+```
