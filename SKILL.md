@@ -9,10 +9,10 @@ Usage:
   memo [--help] [-v] [-f <file>]
   memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note>
   memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>
-  memo clear [-f <file>] [-v]
+  memo clean [-f <file>] [-v]
 
 Options:
-  [-f <file>]        Optional DB basename (default: db/memo)
+  [-f <file>]        Optional DB basename (default: memo)
   -v                 Verbose logs to stderr
   -m <yaml>          Attach YAML Flow metadata to a saved record
   --filter <expr>    Filter recall results by metadata
@@ -28,8 +28,8 @@ Options:
 - `memo recall <query>` recalls top matches (default `k=2`).
 - `memo recall -k <N> <query>` recalls top `N` matches (`N` capped at 100).
 - `memo recall --filter '<expr>' <query>` pre-filters by metadata before KNN search. Uses YAML Flow `$operator` syntax (e.g. `source: user`, `priority: {$gte: 2}`, `tags: {$contains: food}`).
-- `memo clear` wipes the current memory DB files (`.memo`, `.txt`, `.meta`).
-- `-f <file>` is optional and changes DB basename (default files are under `db/`).
+- `memo clean` wipes the current memory DB files (`.memo`, `.txt`, `.meta`).
+- `-f <file>` is optional and changes DB basename; relative values are resolved from the process CWD (where `memo` is run), and absolute paths are used as-is.
 - `-v` enables debug/initialization logs on stderr only.
 
 ## Real examples (actual commands + output)
@@ -63,8 +63,8 @@ Top 2 results for 'party food':
   [1] Score: 0.3266 | cake is for celebrations
   [2] Score: 0.2987 | carrots are orange
 
-$ memo clear
-Cleared memory database (db/memo.memo, db/memo.txt, db/memo.meta)
+$ memo clean
+Cleared memory database (memo.memo, memo.txt, memo.meta)
 ```
 
 ### Save with metadata and filtered recall

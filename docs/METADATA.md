@@ -26,11 +26,12 @@ Outer `{ }` braces are optional (both for `-m` metadata and `--filter` filters).
 
 ### File layout (per DB basename)
 
+With the default basename `memo`, files are created in the current directory:
+
 ```
-db/
-  memo.memo        # binary vectors + ids
-  memo.txt         # line texts
-  memo.meta        # metadata sidecar
+memo.memo        # binary vectors + ids
+memo.txt         # line texts
+memo.meta        # metadata sidecar
 ```
 
 All three files share the same ID space (index 0..N-1).
@@ -70,7 +71,7 @@ memo recall --filter 'tags: {$contains: personal}' tell me about myself
 memo recall -k 5 --filter 'ts: {$gte: 2026-02-01}' recent events
 ```
 
-### `memo clear`
+### `memo clean`
 
 Removes all three sidecar files (`.memo`, `.txt`, `.meta`).
 

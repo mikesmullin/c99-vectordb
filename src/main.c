@@ -234,20 +234,6 @@ static int has_path_separator(const char* s) {
     return (s && strchr(s, '/')) ? 1 : 0;
 }
 
-static int ensure_db_dir(void) {
-    struct stat st;
-    if (stat("db", &st) == 0) {
-        if (S_ISDIR(st.st_mode)) return 1;
-        fprintf(stderr, "Error: db exists but is not a directory\n");
-        return 0;
-    }
-    if (mkdir("db", 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, "Error: failed to create db directory: %s\n", strerror(errno));
-        return 0;
-    }
-    return 1;
-}
-
 static int ensure_parent_dir_for_file(const char* file_path) {
     if (!file_path) return 0;
 
@@ -280,18 +266,30 @@ static int ensure_parent_dir_for_file(const char* file_path) {
     return 1;
 }
 
+// Build DB paths relative to the user's original CWD (not workspace root).
+// g_user_cwd is captured before chdir to workspace root.
+static char g_user_cwd[PATH_MAX] = "";
+
 static void build_db_paths(const char* base,
                            char* index_path, size_t index_size,
                            char* txt_path, size_t txt_size,
                            char* meta_path, size_t meta_size) {
     if (has_path_separator(base)) {
-        snprintf(index_path, index_size, "%s.memo", base);
-        snprintf(txt_path, txt_size, "%s.txt", base);
-        snprintf(meta_path, meta_size, "%s.meta", base);
+        // Absolute or relative path with directory — use as-is (anchored to user CWD)
+        if (base[0] == '/') {
+            snprintf(index_path, index_size, "%s.memo", base);
+            snprintf(txt_path, txt_size, "%s.txt", base);
+            snprintf(meta_path, meta_size, "%s.meta", base);
+        } else {
+            snprintf(index_path, index_size, "%s/%s.memo", g_user_cwd, base);
+            snprintf(txt_path, txt_size, "%s/%s.txt", g_user_cwd, base);
+            snprintf(meta_path, meta_size, "%s/%s.meta", g_user_cwd, base);
+        }
     } else {
-        snprintf(index_path, index_size, "db/%s.memo", base);
-        snprintf(txt_path, txt_size, "db/%s.txt", base);
-        snprintf(meta_path, meta_size, "db/%s.meta", base);
+        // Bare basename — place files in user's CWD
+        snprintf(index_path, index_size, "%s/%s.memo", g_user_cwd, base);
+        snprintf(txt_path, txt_size, "%s/%s.txt", g_user_cwd, base);
+        snprintf(meta_path, meta_size, "%s/%s.meta", g_user_cwd, base);
     }
 }
 
@@ -327,9 +325,9 @@ static void print_help(void) {
     printf("  memo [--help] [-v] [-f <file>]\n");
     printf("  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note>\n");
     printf("  memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>\n");
-    printf("  memo clear [-f <file>] [-v]\n\n");
+    printf("  memo clean [-f <file>] [-v]\n\n");
     printf("Options:\n");
-    printf("  [-f <file>]        Optional DB basename (default: db/memo)\n");
+    printf("  [-f <file>]        Optional DB basename (default: memo)\n");
     printf("  -v                 Verbose logs to stderr\n");
     printf("  -m <yaml>          Attach YAML Flow metadata to a saved record\n");
     printf("  --filter <expr>    Filter recall results by metadata\n");
@@ -366,9 +364,6 @@ static int load_state(VDB_Context* ctx, TextStore* ts, MetaStore* ms, const char
 }
 
 static int save_state(VDB_Index* index, TextStore* ts, MetaStore* ms, const char* db_base) {
-    if (!has_path_separator(db_base) && !ensure_db_dir()) {
-        return 0;
-    }
     char index_path[PATH_MAX];
     char txt_path[PATH_MAX];
     char meta_path[PATH_MAX];
@@ -468,14 +463,20 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // Capture user's CWD before chdir to workspace root
+    if (!getcwd(g_user_cwd, sizeof(g_user_cwd))) {
+        fprintf(stderr, "Error: failed to get current directory\n");
+        return 1;
+    }
+
     if (!Runtime__ChdirToWorkspaceRoot()) {
         MEMO_VLOG("Warning: Failed to auto-locate workspace root; using current directory.\n");
     }
 
     const char* command = positional[0];
-    if (strcmp(command, "clear") == 0) {
+    if (strcmp(command, "clean") == 0) {
         if (positional_count != 1) {
-            fprintf(stderr, "Error: clear does not accept extra arguments\n");
+            fprintf(stderr, "Error: clean does not accept extra arguments\n");
             return 1;
         }
         return clear_state(db_base) ? 0 : 1;
