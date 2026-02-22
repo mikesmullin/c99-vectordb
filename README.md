@@ -1,11 +1,11 @@
-# memo (mac)
+# memo
 
-| version (linked) | description |
+| version | description |
 |---|---|
-| [v2 (current)](https://github.com/mikesmullin/memo/tree/v2) | Current mac-focused FAISS reimplementation, optimized for macOS workflow and YAML-file-based save input. |
-| [v1](https://github.com/mikesmullin/memo/tree/v1) | Previous C99/Vulkan implementation with in-process embedding pipeline and the original save/recall internals. |
+| [v2](https://github.com/mikesmullin/memo/tree/v2) | Current FAISS-based reimplementation w/ YAML-based db. |
+| [v1](https://github.com/mikesmullin/memo/tree/v1) | Previous C99/Vulkan implementation. |
 
-FAISS-based reimplementation of `memo` for macOS.
+FAISS-based reimplementation of `memo`.
 
 ## Goals
 
