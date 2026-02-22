@@ -7,6 +7,11 @@
 #include <limits.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <inttypes.h>
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 // Arena Declarations (implemented in memory.c)
 void Arena__Init(Arena* arena, size_t size);
@@ -31,13 +36,70 @@ LLM_VulkanCtx llm_vk_ctx;
 Tokenizer tokenizer;
 int llm_initialized = 0;
 
+static int dir_has_workspace_layout(const char* dir) {
+    char path_a[PATH_MAX];
+    char path_b[PATH_MAX];
+    char path_c[PATH_MAX];
+    char path_d[PATH_MAX];
+
+    snprintf(path_a, sizeof(path_a), "%s/models/stories110M.bin", dir);
+    snprintf(path_b, sizeof(path_b), "%s/models/tokenizer.bin", dir);
+    snprintf(path_c, sizeof(path_c), "%s/build/memo_search.spv", dir);
+    snprintf(path_d, sizeof(path_d), "%s/build/headless.spv", dir);
+
+    return access(path_a, F_OK) == 0 &&
+           access(path_b, F_OK) == 0 &&
+           access(path_c, F_OK) == 0 &&
+           access(path_d, F_OK) == 0;
+}
+
+static int find_workspace_root_from(const char* start_path, char* out_root, size_t out_size) {
+    char current[PATH_MAX];
+    if (!realpath(start_path, current)) {
+        return 0;
+    }
+
+    while (1) {
+        if (dir_has_workspace_layout(current)) {
+            strncpy(out_root, current, out_size - 1);
+            out_root[out_size - 1] = '\0';
+            return 1;
+        }
+
+        char* slash = strrchr(current, '/');
+        if (!slash) return 0;
+        if (slash == current) {
+            current[1] = '\0';
+            if (dir_has_workspace_layout(current)) {
+                strncpy(out_root, current, out_size - 1);
+                out_root[out_size - 1] = '\0';
+                return 1;
+            }
+            return 0;
+        }
+        *slash = '\0';
+    }
+}
+
 static int Runtime__ChdirToWorkspaceRoot(void) {
+    char root[PATH_MAX];
+    if (find_workspace_root_from(".", root, sizeof(root))) {
+        return chdir(root) == 0;
+    }
+
     char exe_path[PATH_MAX];
+#ifdef __APPLE__
+    uint32_t size = (uint32_t)sizeof(exe_path);
+    if (_NSGetExecutablePath(exe_path, &size) != 0) {
+        return 0;
+    }
+#else
     ssize_t n = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
     if (n <= 0 || n >= (ssize_t)sizeof(exe_path)) {
         return 0;
     }
     exe_path[n] = '\0';
+#endif
 
     char resolved[PATH_MAX];
     if (!realpath(exe_path, resolved)) {
@@ -49,11 +111,25 @@ static int Runtime__ChdirToWorkspaceRoot(void) {
     if (!slash) return 0;
     *slash = '\0';
 
-    slash = strrchr(resolved, '/');
-    if (!slash) return 0;
-    *slash = '\0';
+    if (!find_workspace_root_from(resolved, root, sizeof(root))) {
+        return 0;
+    }
+    return chdir(root) == 0;
+}
 
-    if (chdir(resolved) != 0) {
+static int file_exists(const char* path) {
+    return access(path, F_OK) == 0;
+}
+
+static int ensure_llm_assets_present(void) {
+    if (!file_exists("models/stories110M.bin")) {
+        fprintf(stderr, "Error: missing model file models/stories110M.bin\n");
+        fprintf(stderr, "Hint: run ./models/download.sh from the project root.\n");
+        return 0;
+    }
+    if (!file_exists("models/tokenizer.bin")) {
+        fprintf(stderr, "Error: missing tokenizer file models/tokenizer.bin\n");
+        fprintf(stderr, "Hint: run ./models/download.sh from the project root.\n");
         return 0;
     }
     return 1;
@@ -171,6 +247,38 @@ static int ensure_db_dir(void) {
     return 1;
 }
 
+static int ensure_parent_dir_for_file(const char* file_path) {
+    if (!file_path) return 0;
+
+    char dir[PATH_MAX];
+    strncpy(dir, file_path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+
+    char* slash = strrchr(dir, '/');
+    if (!slash) return 1;
+    if (slash == dir) {
+        return 1;
+    }
+    *slash = '\0';
+
+    for (char* p = dir + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (mkdir(dir, 0755) != 0 && errno != EEXIST) {
+                fprintf(stderr, "Error: failed to create directory %s: %s\n", dir, strerror(errno));
+                return 0;
+            }
+            *p = '/';
+        }
+    }
+
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Error: failed to create directory %s: %s\n", dir, strerror(errno));
+        return 0;
+    }
+    return 1;
+}
+
 static void build_db_paths(const char* base, char* index_path, size_t index_size, char* txt_path, size_t txt_size) {
     if (has_path_separator(base)) {
         snprintf(index_path, index_size, "%s.memo", base);
@@ -248,6 +356,9 @@ static int save_state(VDB_Index* index, TextStore* ts, const char* db_base) {
     char index_path[PATH_MAX];
     char txt_path[PATH_MAX];
     build_db_paths(db_base, index_path, sizeof(index_path), txt_path, sizeof(txt_path));
+    if (!ensure_parent_dir_for_file(index_path) || !ensure_parent_dir_for_file(txt_path)) {
+        return 0;
+    }
     VDB_Index_Save(index, index_path);
     TextStore_Save(ts, txt_path);
     return 1;
@@ -321,6 +432,12 @@ int main(int argc, char** argv) {
         return clear_state(db_base) ? 0 : 1;
     }
 
+    if (strcmp(command, "save") == 0 || strcmp(command, "recall") == 0) {
+        if (!ensure_llm_assets_present()) {
+            return 1;
+        }
+    }
+
     Arena arena;
     Arena__Init(&arena, 1024ULL * 1024ULL * 1024ULL);
 
@@ -389,7 +506,7 @@ int main(int argc, char** argv) {
             Arena__Free(&arena);
             return 1;
         }
-        printf("Memorized: '%s' (ID: %lu)\n", note, id);
+        printf("Memorized: '%s' (ID: %" PRIu64 ")\n", note, id);
         free(note);
     } else if (strcmp(command, "recall") == 0) {
         int k = 2;

@@ -4,6 +4,18 @@
 #include <string.h>
 #include <stdlib.h>
 
+#ifndef VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
+#define VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME "VK_KHR_portability_enumeration"
+#endif
+
+#ifndef VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
+#define VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR 0x00000001
+#endif
+
+#ifndef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+#define VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME "VK_KHR_portability_subset"
+#endif
+
 // Vulkan Context
 typedef struct {
     VkInstance instance;
@@ -106,10 +118,18 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     return VK_FALSE;
 }
 
+static void print_macos_vulkan_hint(void) {
+#ifdef __APPLE__
+    fprintf(stderr,
+        "macOS hint: install Vulkan SDK with MoltenVK and ensure VK_ICD_FILENAMES points to MoltenVK_icd.json.\n");
+#endif
+}
+
 void LLM_VulkanCtx__Init(LLM_VulkanCtx* ctx) {
     // 1. Initialize Volk
     if (volkInitialize() != VK_SUCCESS) {
         fprintf(stderr, "Failed to initialize Volk. Is Vulkan installed?\n");
+        print_macos_vulkan_hint();
         __builtin_trap();
     }
 
@@ -126,20 +146,29 @@ void LLM_VulkanCtx__Init(LLM_VulkanCtx* ctx) {
     create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     create_info.pApplicationInfo = &app_info;
 
-    const char* extensions[] = { VK_EXT_DEBUG_UTILS_EXTENSION_NAME };
+    const char* extensions[2] = {0};
+    u32 extension_count = 0;
+#ifdef __APPLE__
+    extensions[extension_count++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
+    if (enable_validation_layers) {
+        extensions[extension_count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    }
+
     if (enable_validation_layers) {
         create_info.enabledLayerCount = ARRAY_LEN(validation_layers);
         create_info.ppEnabledLayerNames = validation_layers;
-        create_info.enabledExtensionCount = ARRAY_LEN(extensions);
-        create_info.ppEnabledExtensionNames = extensions;
     } else {
         create_info.enabledLayerCount = 0;
-        create_info.enabledExtensionCount = 0;
     }
+    create_info.enabledExtensionCount = extension_count;
+    create_info.ppEnabledExtensionNames = extension_count ? extensions : NULL;
 
     VkResult result = vkCreateInstance(&create_info, NULL, &ctx->instance);
     if (result != VK_SUCCESS) {
         fprintf(stderr, "Failed to create Vulkan Instance! Error: %d\n", result);
+        print_macos_vulkan_hint();
         __builtin_trap();
     }
 
@@ -164,6 +193,7 @@ void LLM_VulkanCtx__Init(LLM_VulkanCtx* ctx) {
     vkEnumeratePhysicalDevices(ctx->instance, &device_count, NULL);
     if (device_count == 0) {
         fprintf(stderr, "Failed to find GPUs with Vulkan support!\n");
+        print_macos_vulkan_hint();
         __builtin_trap();
     }
     VkPhysicalDevice devices[8];
@@ -208,7 +238,14 @@ void LLM_VulkanCtx__Init(LLM_VulkanCtx* ctx) {
     device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_create_info.pQueueCreateInfos = &queue_create_info;
     device_create_info.queueCreateInfoCount = 1;
-    device_create_info.enabledExtensionCount = 0; // No extensions needed for basic compute for now
+
+    const char* device_extensions[1] = {0};
+    u32 device_extension_count = 0;
+#ifdef __APPLE__
+    device_extensions[device_extension_count++] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
+#endif
+    device_create_info.enabledExtensionCount = device_extension_count;
+    device_create_info.ppEnabledExtensionNames = device_extension_count ? device_extensions : NULL;
 
     if (enable_validation_layers) {
         device_create_info.enabledLayerCount = ARRAY_LEN(validation_layers);

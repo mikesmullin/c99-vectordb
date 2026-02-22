@@ -16,6 +16,20 @@ A minimalist standalone vectordb w/ Vulkan hardware-acceleration.
 - Vulkan SDK (specifically `glslc` for shader compilation)
 - Make
 
+### macOS (MoltenVK)
+
+This project uses Vulkan compute. On macOS, Vulkan is provided through MoltenVK.
+
+1. Install LunarG Vulkan SDK for macOS (includes MoltenVK and `glslc`).
+2. Ensure the SDK binaries are on `PATH` (so `glslc` is found).
+3. Point Vulkan loader to MoltenVK ICD, e.g.:
+
+```bash
+export VK_ICD_FILENAMES="$VULKAN_SDK/share/vulkan/icd.d/MoltenVK_icd.json"
+```
+
+If `vkCreateInstance` or GPU enumeration fails on macOS, check that `VK_ICD_FILENAMES` points to a valid MoltenVK JSON file from your installed SDK.
+
 ## Build
 
 ```bash
@@ -36,6 +50,8 @@ One-time install:
 ```bash
 ./models/download.sh
 ```
+
+`memo save` and `memo recall` require these model files and will now exit with a clear error message if they are missing.
 
 That script downloads the known-good model files and verifies their SHA1 checksums.
 

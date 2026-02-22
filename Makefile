@@ -1,6 +1,15 @@
 CC = clang
-CFLAGS = -std=c99 -O3 -Wall -Wextra -pedantic -D_GNU_SOURCE -I vendor
-LDFLAGS = -lm -ldl -lpthread
+UNAME_S := $(shell uname -s)
+
+CFLAGS = -std=c99 -O3 -Wall -Wextra -pedantic -I vendor
+LDFLAGS = -lm -lpthread
+
+ifeq ($(UNAME_S),Darwin)
+	CFLAGS += -D_DARWIN_C_SOURCE -Wno-typedef-redefinition
+else
+	CFLAGS += -D_GNU_SOURCE
+	LDFLAGS += -ldl
+endif
 
 SRC_DIR = src
 BUILD_DIR = build
@@ -9,12 +18,13 @@ VENDOR_DIR = vendor
 SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/vectordb.c $(SRC_DIR)/memory.c $(SRC_DIR)/vulkan_backend.c $(VENDOR_DIR)/volk.c
 OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
 TARGET = $(BUILD_DIR)/memo
+BINDIR ?= $(HOME)/.local/bin
 SHADER_SRC = shaders/memo_search.comp
 SHADER_SPV = $(BUILD_DIR)/memo_search.spv
 LLM_SHADER_SRC = shaders/headless.comp
 LLM_SHADER_SPV = $(BUILD_DIR)/headless.spv
 
-.PHONY: all clean
+.PHONY: all clean install uninstall
 
 all: $(TARGET) $(SHADER_SPV) $(LLM_SHADER_SPV)
 
@@ -36,3 +46,14 @@ $(LLM_SHADER_SPV): $(LLM_SHADER_SRC)
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+install: $(TARGET)
+	@mkdir -p $(BINDIR)
+	install -m 755 $(TARGET) $(BINDIR)/memo
+	@echo "Installed memo to $(BINDIR)/memo"
+	@echo "Ensure $(BINDIR) is in PATH"
+	@echo "Add to ~/.zshrc: export PATH=\"$(BINDIR):\$$PATH\""
+
+uninstall:
+	rm -f $(BINDIR)/memo
+	@echo "Removed $(BINDIR)/memo"

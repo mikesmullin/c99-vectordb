@@ -4,6 +4,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
+#define VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME "VK_KHR_portability_enumeration"
+#endif
+
+#ifndef VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
+#define VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR 0x00000001
+#endif
+
+#ifndef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+#define VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME "VK_KHR_portability_subset"
+#endif
+
 // Helper macros
 #define VK_CHECK(x) do { VkResult err = x; if (err) { fprintf(stderr, "Vulkan Error: %d\n", err); __builtin_trap(); } } while (0)
 
@@ -63,6 +75,15 @@ void Vulkan_Init(VulkanCtx* ctx) {
 
     VkInstanceCreateInfo createInfo = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     createInfo.pApplicationInfo = &appInfo;
+
+    const char* instance_extensions[1] = {0};
+    uint32_t instance_extension_count = 0;
+#ifdef __APPLE__
+    instance_extensions[instance_extension_count++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
+    createInfo.enabledExtensionCount = instance_extension_count;
+    createInfo.ppEnabledExtensionNames = instance_extension_count ? instance_extensions : NULL;
     
     // Validation Layers (Optional, skip for minimal)
     // const char* layers[] = {"VK_LAYER_KHRONOS_validation"};
@@ -109,6 +130,14 @@ void Vulkan_Init(VulkanCtx* ctx) {
     VkDeviceCreateInfo deviceCreateInfo = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
     deviceCreateInfo.queueCreateInfoCount = 1;
+
+    const char* device_extensions[1] = {0};
+    uint32_t device_extension_count = 0;
+#ifdef __APPLE__
+    device_extensions[device_extension_count++] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
+#endif
+    deviceCreateInfo.enabledExtensionCount = device_extension_count;
+    deviceCreateInfo.ppEnabledExtensionNames = device_extension_count ? device_extensions : NULL;
 
     VK_CHECK(vkCreateDevice((VkPhysicalDevice)ctx->phys_device, &deviceCreateInfo, NULL, (VkDevice*)&ctx->device));
     volkLoadDevice((VkDevice)ctx->device);
