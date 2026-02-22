@@ -333,6 +333,57 @@ static char* join_args(int start, int argc, char** argv) {
     return out;
 }
 
+static char* read_note_from_stdin(void) {
+    size_t cap = 4096;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    if (!buf) return NULL;
+
+    for (;;) {
+        if (len + 2048 + 1 > cap) {
+            size_t new_cap = cap * 2;
+            char* next = (char*)realloc(buf, new_cap);
+            if (!next) {
+                free(buf);
+                return NULL;
+            }
+            buf = next;
+            cap = new_cap;
+        }
+
+        size_t n = fread(buf + len, 1, 2048, stdin);
+        len += n;
+
+        if (n < 2048) {
+            if (ferror(stdin)) {
+                free(buf);
+                return NULL;
+            }
+            break;
+        }
+    }
+
+    buf[len] = '\0';
+    return buf;
+}
+
+static void print_recall_result_multiline(int rank, f32 score, const char* text) {
+    printf("  [%d] Score: %.4f |\n", rank, score);
+
+    const char* p = text;
+    while (1) {
+        const char* nl = strchr(p, '\n');
+        if (!nl) {
+            printf("      %s\n", p);
+            break;
+        }
+
+        int n = (int)(nl - p);
+        printf("      %.*s\n", n, p);
+        p = nl + 1;
+    }
+}
+
 static int is_integer(const char* s) {
     if (!s || !*s) return 0;
     if (*s == '+' || *s == '-') s++;
@@ -347,13 +398,14 @@ static int is_integer(const char* s) {
 static void print_help(void) {
     printf("Usage:\n");
     printf("  memo [--help] [-v] [-f <file>]\n");
-    printf("  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note>\n");
+    printf("  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note|->\n");
     printf("  memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>\n");
     printf("  memo clean [-f <file>] [-v]\n\n");
     printf("Options:\n");
     printf("  [-f <file>]        Optional DB basename (default: memo)\n");
     printf("  -v                 Verbose logs to stderr\n");
     printf("  -m <yaml>          Attach YAML Flow metadata to a saved record\n");
+    printf("  <note|->           Use '-' to read note text from stdin\n");
     printf("  --filter <expr>    Filter recall results by metadata\n");
     printf("  --help             Show this help\n");
 }
@@ -547,7 +599,12 @@ int main(int argc, char** argv) {
             note_start = 2;
         }
 
-        char* note = join_args(note_start, positional_count, positional);
+        char* note = NULL;
+        if (note_start == positional_count - 1 && strcmp(positional[note_start], "-") == 0) {
+            note = read_note_from_stdin();
+        } else {
+            note = join_args(note_start, positional_count, positional);
+        }
         if (!note || note[0] == '\0') {
             fprintf(stderr, "Error: save requires non-empty note text\n");
             free(note);
@@ -638,7 +695,7 @@ int main(int argc, char** argv) {
                 if (results[i].score < -0.9f) continue;
                 u64 id = results[i].id;
                 if (id < (u64)ts.count) {
-                    printf("  [%d] Score: %.4f | %s\n", i + 1, results[i].score, ts.lines[id]);
+                    print_recall_result_multiline(i + 1, results[i].score, ts.lines[id]);
                 }
             }
         }

@@ -43,16 +43,20 @@ All three files share the same ID space (index 0..N-1).
 ### `memo save`
 
 ```
-memo save [-f <file>] [-m <yaml>] [<id>] <note>
+memo save [-f <file>] [-m <yaml>] [<id>] <note|->
 ```
 
 The `-m` flag attaches YAML Flow metadata to the saved record. If omitted, the
 record is stored with no metadata (it will not match any filter).
 
+Passing `-` as the note means "read note text from stdin", which is useful for
+multi-line documents.
+
 ```bash
 memo save -m "source: chat, tags: [personal]" I love sushi
 memo save -m "ts: 2026-02-21" My meeting is at 3pm
 memo save My cat is named Luna          # no metadata
+cat note.md | memo save -m "source: user" -
 ```
 
 ### `memo recall`
@@ -64,6 +68,9 @@ memo recall [-f <file>] [-k <N>] [--filter <expr>] <query>
 The `--filter` flag narrows results by metadata before running the semantic
 search. Only records whose metadata passes the filter are sent to the GPU for
 KNN scoring.
+
+Recall output is block-formatted: the score/header line is followed by the
+stored note text indented underneath, so multi-line notes remain readable.
 
 ```bash
 memo recall --filter 'source: chat' what food do I like

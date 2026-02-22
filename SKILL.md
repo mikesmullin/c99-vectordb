@@ -7,7 +7,7 @@
 ```text
 Usage:
   memo [--help] [-v] [-f <file>]
-  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note>
+  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note|->
   memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>
   memo clean [-f <file>] [-v]
 
@@ -23,6 +23,7 @@ Options:
 
 - `memo` or `memo --help` prints help.
 - `memo save <note>` stores a new memory.
+- `memo save -` reads the note from stdin (useful for multi-line notes/documents).
 - `memo save -m '<yaml>' <note>` stores a memory with YAML Flow metadata (e.g. `source: user, tags: [health]`).
 - `memo save <id> <note>` overwrites memory at an existing ID.
 - `memo recall <query>` recalls top matches (default `k=2`).
@@ -94,6 +95,7 @@ Top 3 results for 'health info':
 ## Output contract
 
 - Normal mode: only final subcommand result goes to stdout.
+- `memo recall` prints each result as a block; multi-line notes are indented under the matching result header.
 - Verbose mode (`-v`): extra debug/startup info goes to stderr.
 
 ## Fast usage patterns
