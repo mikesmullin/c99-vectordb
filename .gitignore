@@ -1,10 +1,25 @@
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local virtual environments
+.venv/
+
+# Packaging/build outputs
+*.egg-info/
+dist/
 build/
-/tmp/
-models/*
-!models/download.sh
-docs/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Local memo database files (when run from ./mac)
 *.memo
-*.txt
-PROMPT.md
-.cache/
-/db/*
+*.meta
+memo.txt

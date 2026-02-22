@@ -1,0 +1,14 @@
+[project]
+name = "memo-mac"
+version = "0.1.0"
+description = "macOS FAISS-based memo reimplementation"
+requires-python = ">=3.11"
+dependencies = [
+  "faiss-cpu>=1.13.0",
+  "numpy>=2.0.0",
+  "pyyaml>=6.0.0",
+]
+
+[project.scripts]
+memo = "memo_cli:main"
+memo-mac = "memo_cli:main"

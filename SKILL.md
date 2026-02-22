@@ -1,22 +1,22 @@
 # memo — Usage Guide for AI Agents
 
-`memo` is a lightweight vector database for agents to store and recall important facts as long-term memory.
+`memo` is a FAISS-backed local vector memory tool for storing and recalling long-term facts.
 
-## Command help (actual output)
+## Command help
 
 ```text
 Usage:
   memo [--help] [-v] [-f <file>]
-  memo save [-f <file>] [-v] [-m <yaml>] [-i <path>]... [<id>] <note|->
+  memo save [-f <file>] [-v] <yaml_file>
   memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>
   memo clean [-f <file>] [-v]
 
 Options:
   [-f <file>]        Optional DB basename (default: memo)
   -v                 Verbose logs to stderr
-  -m <yaml>          Attach YAML Flow metadata to a saved record
-  -i <path>          Save one or more note files in one process (repeat -i)
-                     In batch mode, each -i captures the most recent -m metadata
+  <yaml_file>        YAML file for save input (single or multi-doc using ---)
+                     Each doc requires: metadata: <map>, body: <string>
+                     Optional per-doc id: <int> to overwrite existing record
   --filter <expr>    Filter recall results by metadata
   --help             Show this help
 ```
@@ -24,92 +24,190 @@ Options:
 ## Core behavior
 
 - `memo` or `memo --help` prints help.
-- `memo save <note>` stores a new memory.
-- `memo save -` reads the note from stdin (useful for multi-line notes/documents).
-- `memo save -i <path>` saves one or more note files in one process (repeat `-i`).
-- In batch mode, metadata can be per-entry by interleaving: `-m <meta1> -i <file1> -m <meta2> -i <file2>`.
-- `memo save -m '<yaml>' <note>` stores a memory with YAML Flow metadata (e.g. `source: user, tags: [health]`).
-- `memo save <id> <note>` overwrites memory at an existing ID.
+- `memo save <yaml_file>` is the only supported save input mode.
+- YAML input can contain one or many docs (`---` separators).
+- Each YAML doc requires:
+  - `body` (non-empty string)
+  - optional `metadata` (mapping)
+  - optional `id` (non-negative integer) to overwrite an existing record.
 - `memo recall <query>` recalls top matches (default `k=2`).
 - `memo recall -k <N> <query>` recalls top `N` matches (`N` capped at 100).
-- `memo recall --filter '<expr>' <query>` pre-filters by metadata before KNN search. Uses YAML Flow `$operator` syntax (e.g. `source: user`, `priority: {$gte: 2}`, `tags: {$contains: food}`).
-- `memo clean` wipes the current memory DB files (`.memo`, `.txt`, `.meta`).
-- `-f <file>` is optional and changes DB basename; relative values are resolved from the process CWD (where `memo` is run), and absolute paths are used as-is.
-- `-v` enables debug/initialization logs on stderr only.
+- `memo recall --filter '<expr>' <query>` filters on metadata using YAML-flow expressions/operators.
+- `memo clean` wipes the current DB files (`.memo`, `.txt`, `.meta`).
+- `-f <file>` changes DB basename; relative paths resolve from process CWD.
+- `-v` enables verbose logs to stderr only.
 
-## Real examples (actual commands + output)
+## Save input format
 
-### Save and recall
+Single document:
 
-```bash
-$ memo save my name is Bob
-Memorized: 'my name is Bob' (ID: 0)
-
-$ memo save cake is for birthdays
-Memorized: 'cake is for birthdays' (ID: 1)
-
-$ memo save carrots are orange
-Memorized: 'carrots are orange' (ID: 2)
-
-$ memo recall -k 2 party food
-Top 2 results for 'party food':
-  [1] Score: 0.3026 | cake is for birthdays
-  [2] Score: 0.2987 | carrots are orange
+```yaml
+metadata:
+  source: user
+  tags: [prefs, profile]
+body: |
+  My favorite color is blue.
 ```
 
-### Overwrite an existing memory by ID
+Batch documents:
+
+```yaml
+---
+metadata:
+  source: user
+  category: health
+body: I am allergic to peanuts.
+
+---
+metadata:
+  source: chat
+  category: pref
+body: User prefers dark mode.
+```
+
+Overwrite existing id:
+
+```yaml
+---
+id: 3
+metadata:
+  source: user
+body: Updated note text for id 3.
+```
+
+## Real examples
+
+### Save + recall
 
 ```bash
-$ memo save 1 cake is for celebrations
-Memorized: 'cake is for celebrations' (ID: 1)
+$ memo save /tmp/memo-input.yaml
+Memorized: 'I am allergic to peanuts.' (ID: 0)
+Memorized: 'User prefers dark mode.' (ID: 1)
 
-$ memo recall -k 2 party food
-Top 2 results for 'party food':
-  [1] Score: 0.3266 | cake is for celebrations
-  [2] Score: 0.2987 | carrots are orange
+$ memo recall -k 2 health info
+Top 2 results for 'health info':
+  [1] Score: 0.2300 |
+      I am allergic to peanuts.
+```
 
+### Filtered recall
+
+```bash
+$ memo recall -k 3 --filter '{source: user}' what do I know about myself
+Top 3 results for 'what do I know about myself':
+  [1] Score: 0.2500 |
+      I am allergic to peanuts.
+```
+
+### Clean
+
+```bash
 $ memo clean
 Cleared memory database (memo.memo, memo.txt, memo.meta)
 ```
 
-### Save with metadata and filtered recall
-
-```bash
-$ memo save -m "source: user, category: pref" My favorite color is blue
-Memorized: 'My favorite color is blue' (ID: 0)
-
-$ memo save -m "source: user, category: health, tags: [medical, allergy]" I am allergic to peanuts
-Memorized: 'I am allergic to peanuts' (ID: 1)
-
-$ memo save -m "source: chat, category: pref" User prefers dark mode
-Memorized: 'User prefers dark mode' (ID: 2)
-
-$ memo recall -k 3 --filter 'source: user' what do I know about myself
-Top 3 results for 'what do I know about myself':
-  [1] Score: 0.25 | I am allergic to peanuts
-  [2] Score: 0.16 | My favorite color is blue
-
-$ memo recall -k 3 --filter 'tags: {$contains: allergy}' health info
-Top 3 results for 'health info':
-  [1] Score: 0.23 | I am allergic to peanuts
-```
-
-*IMPORTANT:* Learn more about metadata by reading `docs/METADATA.md`.
-
 ## Output contract
 
-- Normal mode: only final subcommand result goes to stdout.
-- `memo recall` prints each result as a block; multi-line notes are indented under the matching result header.
-- Verbose mode (`-v`): extra debug/startup info goes to stderr.
+- Normal mode: only subcommand result text goes to stdout.
+- Recall output uses a multi-line block format:
+  - header line with rank and score
+  - note body lines indented below
+- Verbose mode (`-v`): debug/startup logs on stderr.
 
-## Fast usage patterns
+## Important differences vs legacy C memo
 
-- Default DB (recommended):
-  - `memo save remember this`
-  - `memo recall remember`
-- Optional custom DB path with `-f`:
-  - `memo -f /tmp/memo_test save hello world`
-  - `memo -f /tmp/memo_test recall hello`
-- Batch file save:
-  - `memo save -m "source: docs" -i notes/a.md -i notes/b.md`
-  - `memo save -m "source: a" -i notes/a.md -m "source: b" -i notes/b.md`
+- No `memo save <note>` positional note mode.
+- No stdin save mode (`memo save -`).
+- No `-m` / `-i` interleaved batch mode.
+- YAML file input is required for all saves.
+
+## Metadata filtering (embedded reference)
+
+`memo recall --filter '<expr>' <query>` applies deterministic metadata filtering
+before vector search scoring.
+
+### Metadata shape (save YAML)
+
+Metadata is stored per record from the `metadata` mapping in each YAML document:
+
+```yaml
+---
+metadata:
+  source: user
+  ts: 2026-02-21
+  tags: [personal, food]
+  priority: 2
+body: I love sushi.
+```
+
+Records without `metadata` do not match any `--filter` expression.
+
+### Filter syntax
+
+Filters use YAML Flow syntax. Outer `{}` are optional.
+
+- `source: user`
+- `{source: user}`
+
+Both are equivalent.
+
+### Supported operators
+
+| Operator       | Meaning            | Example                      |
+|----------------|--------------------|------------------------------|
+| *(bare value)* | exact match        | `source: user`               |
+| `$ne`          | not equal          | `source: {$ne: system}`      |
+| `$gte`         | greater-or-equal   | `priority: {$gte: 2}`        |
+| `$lte`         | less-or-equal      | `ts: {$lte: 2026-01-31}`     |
+| `$prefix`      | prefix match       | `category: {$prefix: per}`   |
+| `$contains`    | array contains     | `tags: {$contains: food}`    |
+
+### Boolean logic
+
+Top-level keys are implicitly ANDed:
+
+```bash
+memo recall --filter 'source: user, priority: {$gte: 2}' urgent user items
+```
+
+Use `$and` for multiple conditions on the same key:
+
+```bash
+memo recall --filter '$and: [{ts: {$gte: 2026-01-01}}, {ts: {$lte: 2026-01-31}}]' january memories
+```
+
+Use `$or` for alternative conditions:
+
+```bash
+memo recall --filter '$or: [{source: user}, {source: chat}]' user or chat memories
+```
+
+### Practical examples
+
+```bash
+# Exact match
+memo recall --filter 'source: chat' what did we talk about
+
+# Numeric threshold
+memo recall --filter 'priority: {$gte: 3}' important things
+
+# Lexicographic/date threshold
+memo recall --filter 'ts: {$gte: 2026-02-01}' recent events
+
+# Prefix
+memo recall --filter 'category: {$prefix: per}' personal items
+
+# Array contains
+memo recall --filter 'tags: {$contains: food}' what food do I like
+
+# Combined conditions
+memo recall --filter 'source: user, category: health, priority: {$gte: 2}' important health
+```
+
+### How filtering is applied
+
+1. Metadata filter evaluates across records and determines candidate IDs.
+2. Vector search runs on those candidates.
+3. Results are returned in score order.
+
+If `--filter` is omitted, all records are eligible for vector search.
