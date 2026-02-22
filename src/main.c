@@ -29,6 +29,10 @@ void Arena__Free(Arena* arena);
 
 int g_memo_verbose = 0;
 
+static char g_workspace_root[PATH_MAX] = "";
+static char g_model_path[PATH_MAX] = "";
+static char g_tokenizer_path[PATH_MAX] = "";
+
 // Global LLM State
 Config llm_config;
 TransformerWeights llm_weights;
@@ -82,10 +86,12 @@ static int find_workspace_root_from(const char* start_path, char* out_root, size
     }
 }
 
-static int Runtime__ChdirToWorkspaceRoot(void) {
+static int Runtime__ResolveWorkspaceRoot(char* out_root, size_t out_size) {
     char root[PATH_MAX];
     if (find_workspace_root_from(".", root, sizeof(root))) {
-        return chdir(root) == 0;
+        strncpy(out_root, root, out_size - 1);
+        out_root[out_size - 1] = '\0';
+        return 1;
     }
 
     char exe_path[PATH_MAX];
@@ -115,6 +121,24 @@ static int Runtime__ChdirToWorkspaceRoot(void) {
     if (!find_workspace_root_from(resolved, root, sizeof(root))) {
         return 0;
     }
+
+    strncpy(out_root, root, out_size - 1);
+    out_root[out_size - 1] = '\0';
+    return 1;
+}
+
+static int Runtime__ChdirToWorkspaceRoot(void) {
+    char root[PATH_MAX];
+    if (!Runtime__ResolveWorkspaceRoot(root, sizeof(root))) {
+        return 0;
+    }
+
+    strncpy(g_workspace_root, root, sizeof(g_workspace_root) - 1);
+    g_workspace_root[sizeof(g_workspace_root) - 1] = '\0';
+
+    snprintf(g_model_path, sizeof(g_model_path), "%s/models/stories110M.bin", g_workspace_root);
+    snprintf(g_tokenizer_path, sizeof(g_tokenizer_path), "%s/models/tokenizer.bin", g_workspace_root);
+
     return chdir(root) == 0;
 }
 
@@ -123,13 +147,13 @@ static int file_exists(const char* path) {
 }
 
 static int ensure_llm_assets_present(void) {
-    if (!file_exists("models/stories110M.bin")) {
-        fprintf(stderr, "Error: missing model file models/stories110M.bin\n");
+    if (!file_exists(g_model_path)) {
+        fprintf(stderr, "Error: missing model file %s\n", g_model_path);
         fprintf(stderr, "Hint: run ./models/download.sh from the project root.\n");
         return 0;
     }
-    if (!file_exists("models/tokenizer.bin")) {
-        fprintf(stderr, "Error: missing tokenizer file models/tokenizer.bin\n");
+    if (!file_exists(g_tokenizer_path)) {
+        fprintf(stderr, "Error: missing tokenizer file %s\n", g_tokenizer_path);
         fprintf(stderr, "Hint: run ./models/download.sh from the project root.\n");
         return 0;
     }
@@ -139,13 +163,13 @@ static int ensure_llm_assets_present(void) {
 void Init_LLM(Arena* arena) {
     if (llm_initialized) return;
     MEMO_VLOG("Initializing TinyLlama 110M...\n");
-    LLM__Load("models/stories110M.bin", &llm_config, &llm_weights, arena);
+    LLM__Load(g_model_path, &llm_config, &llm_weights, arena);
     LLM_VulkanCtx__Init(&llm_vk_ctx);
     LLM_VulkanCtx__SetupPipeline(&llm_vk_ctx);
     LLM_VulkanCtx__UploadWeights(&llm_vk_ctx, arena->base, arena->used);
     LLM_VulkanCtx__PrepareBuffers(&llm_vk_ctx, 1024 * 1024, 1024 * 1024);
     LLM__InitState(&llm_state, &llm_config, arena);
-    Tokenizer__Init(&tokenizer, "models/tokenizer.bin", llm_config.vocab_size, arena);
+    Tokenizer__Init(&tokenizer, g_tokenizer_path, llm_config.vocab_size, arena);
     llm_initialized = 1;
     MEMO_VLOG("LLM Initialized.\n");
 }
@@ -468,6 +492,10 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Error: failed to get current directory\n");
         return 1;
     }
+
+    // Fallback paths if workspace root cannot be located.
+    snprintf(g_model_path, sizeof(g_model_path), "models/stories110M.bin");
+    snprintf(g_tokenizer_path, sizeof(g_tokenizer_path), "models/tokenizer.bin");
 
     if (!Runtime__ChdirToWorkspaceRoot()) {
         MEMO_VLOG("Warning: Failed to auto-locate workspace root; using current directory.\n");

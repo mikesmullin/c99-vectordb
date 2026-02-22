@@ -49,8 +49,8 @@ clean:
 
 install: all
 	@mkdir -p $(BINDIR)
-	install -m 755 $(TARGET) $(BINDIR)/memo
-	@echo "Installed memo to $(BINDIR)/memo"
+	ln -sfn $(abspath $(TARGET)) $(BINDIR)/memo
+	@echo "Installed memo symlink to $(BINDIR)/memo -> $(abspath $(TARGET))"
 	@echo "Ensure $(BINDIR) is in PATH"
 	@echo "Add to ~/.zshrc: export PATH=\"$(BINDIR):\$$PATH\""
 
