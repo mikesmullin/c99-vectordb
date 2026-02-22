@@ -5,6 +5,7 @@ __pycache__/
 
 # Local virtual environments
 .venv/
+uv.lock
 
 # Packaging/build outputs
 *.egg-info/
@@ -21,8 +22,7 @@ build/
 
 # Local memo database files (when run from ./mac)
 *.memo
-*.meta
-memo.txt
+*.yaml
 
 # Temporary files
 /tmp/

@@ -48,20 +48,6 @@ def build_db_paths(base: str, user_cwd: str) -> tuple[Path, Path]:
     )
 
 
-def build_legacy_db_paths(base: str, user_cwd: str) -> tuple[Path, Path]:
-    if has_path_separator(base):
-        if base.startswith("/"):
-            prefix = Path(base)
-        else:
-            prefix = Path(user_cwd) / base
-    else:
-        prefix = Path(user_cwd) / base
-    return (
-        prefix.with_suffix(".txt"),
-        prefix.with_suffix(".meta"),
-    )
-
-
 def ensure_parent_dir(file_path: Path) -> None:
     parent = file_path.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -284,9 +270,8 @@ def print_recall_result_multiline(rank: int, score: float, text: str) -> None:
 
 def command_clean(db_base: str, user_cwd: str) -> int:
     index_path, yaml_path = build_db_paths(db_base, user_cwd)
-    legacy_txt_path, legacy_meta_path = build_legacy_db_paths(db_base, user_cwd)
     removed_any = False
-    for p in (index_path, yaml_path, legacy_txt_path, legacy_meta_path):
+    for p in (index_path, yaml_path):
         try:
             p.unlink()
             removed_any = True
@@ -299,12 +284,12 @@ def command_clean(db_base: str, user_cwd: str) -> int:
     if removed_any:
         print(
             "Cleared memory database "
-            f"({index_path}, {yaml_path}, {legacy_txt_path}, {legacy_meta_path})"
+            f"({index_path}, {yaml_path})"
         )
     else:
         print(
             "Database already empty "
-            f"({index_path}, {yaml_path}, {legacy_txt_path}, {legacy_meta_path})"
+            f"({index_path}, {yaml_path})"
         )
     return 0
 

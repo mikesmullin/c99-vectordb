@@ -96,18 +96,4 @@ Notes:
 - `--fields` supports `id`, `metadata`, and metadata keys (for example `source` or `metadata.source`).
 - `--stats <key>` prints cardinality and range summary (numeric/date-like when parseable).
 
-## One-time migration from legacy sidecars
-
-Runtime now uses only `.memo + .yaml` and does not parse legacy `.txt/.meta` files.
-
-Use the one-time migration script for old DBs:
-
-```bash
-python tmp/migrate_legacy_to_yaml.py memo
-```
-
-Optional overwrite if `memo.yaml` already exists:
-
-```bash
-python tmp/migrate_legacy_to_yaml.py memo --force
-```
+Runtime now uses only `.memo + .yaml`.

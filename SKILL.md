@@ -37,7 +37,7 @@ Options:
 - `memo analyze --filter '<expr>'` runs metadata-only analysis (no semantic query).
 - `memo analyze --stats <key>` prints cardinality and numeric/date-like range summaries.
 - `memo analyze --fields id,source,...` projects metadata rows without body text.
-- `memo clean` wipes the current DB files (`.memo`, `.txt`, `.meta`).
+- `memo clean` wipes the current DB files (`.memo`, `.yaml`).
 - `-f <file>` changes DB basename; relative paths resolve from process CWD.
 - `-v` enables verbose logs to stderr only.
 
@@ -116,7 +116,7 @@ ID  source  category
 
 ```bash
 $ memo clean
-Cleared memory database (memo.memo, memo.yaml, memo.txt, memo.meta)
+Cleared memory database (memo.memo, memo.yaml)
 ```
 
 ## Output contract
