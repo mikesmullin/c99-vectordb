@@ -40,7 +40,7 @@ typedef struct {
 void VDB_Init(VDB_Context* ctx, Arena* arena);
 VDB_Index* VDB_Index_Create(VDB_Context* ctx, int dim, VDB_Metric metric, int capacity);
 void VDB_Index_Add(VDB_Index* idx, u64 id, const f32* vector);
-void VDB_Search(VDB_Index* idx, const f32* query_vec, int k, VDB_Result* results);
+void VDB_Search(VDB_Index* idx, const f32* query_vec, int k, const u8* filter_mask, VDB_Result* results);
 
 // IO
 void VDB_Index_Save(VDB_Index* idx, const char* filename);

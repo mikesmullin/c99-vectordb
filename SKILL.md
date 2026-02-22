@@ -7,24 +7,28 @@
 ```text
 Usage:
   memo [--help] [-v] [-f <file>]
-  memo save [-f <file>] [-v] [<id>] <note>
-  memo recall [-f <file>] [-v] [-k <N>] <query>
+  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note>
+  memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>
   memo clear [-f <file>] [-v]
 
 Options:
-  [-f <file>] Optional DB basename (default: db/memo)
-  -v          Verbose logs to stderr
-  --help      Show this help
+  [-f <file>]        Optional DB basename (default: db/memo)
+  -v                 Verbose logs to stderr
+  -m <yaml>          Attach YAML Flow metadata to a saved record
+  --filter <expr>    Filter recall results by metadata
+  --help             Show this help
 ```
 
 ## Core behavior
 
 - `memo` or `memo --help` prints help.
 - `memo save <note>` stores a new memory.
+- `memo save -m '<yaml>' <note>` stores a memory with YAML Flow metadata (e.g. `source: user, tags: [health]`).
 - `memo save <id> <note>` overwrites memory at an existing ID.
 - `memo recall <query>` recalls top matches (default `k=2`).
 - `memo recall -k <N> <query>` recalls top `N` matches (`N` capped at 100).
-- `memo clear` wipes the current memory DB files.
+- `memo recall --filter '<expr>' <query>` pre-filters by metadata before KNN search. Uses YAML Flow `$operator` syntax (e.g. `source: user`, `priority: {$gte: 2}`, `tags: {$contains: food}`).
+- `memo clear` wipes the current memory DB files (`.memo`, `.txt`, `.meta`).
 - `-f <file>` is optional and changes DB basename (default files are under `db/`).
 - `-v` enables debug/initialization logs on stderr only.
 
@@ -60,8 +64,32 @@ Top 2 results for 'party food':
   [2] Score: 0.2987 | carrots are orange
 
 $ memo clear
-Cleared memory database (db/memo.memo, db/memo.txt)
+Cleared memory database (db/memo.memo, db/memo.txt, db/memo.meta)
 ```
+
+### Save with metadata and filtered recall
+
+```bash
+$ memo save -m "source: user, category: pref" My favorite color is blue
+Memorized: 'My favorite color is blue' (ID: 0)
+
+$ memo save -m "source: user, category: health, tags: [medical, allergy]" I am allergic to peanuts
+Memorized: 'I am allergic to peanuts' (ID: 1)
+
+$ memo save -m "source: chat, category: pref" User prefers dark mode
+Memorized: 'User prefers dark mode' (ID: 2)
+
+$ memo recall -k 3 --filter 'source: user' what do I know about myself
+Top 3 results for 'what do I know about myself':
+  [1] Score: 0.25 | I am allergic to peanuts
+  [2] Score: 0.16 | My favorite color is blue
+
+$ memo recall -k 3 --filter 'tags: {$contains: allergy}' health info
+Top 3 results for 'health info':
+  [1] Score: 0.23 | I am allergic to peanuts
+```
+
+*IMPORTANT:* Learn more about metadata by reading `docs/METADATA.md`.
 
 ## Output contract
 

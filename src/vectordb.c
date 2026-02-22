@@ -58,51 +58,79 @@ static int compare_results(const void* a, const void* b) {
     return 0;
 }
 
-void VDB_Search(VDB_Index* idx, const f32* query_vec, int k, VDB_Result* results) {
-    VDB_Result* all_results = (VDB_Result*)malloc(idx->count * sizeof(VDB_Result));
+void VDB_Search(VDB_Index* idx, const f32* query_vec, int k, const u8* filter_mask, VDB_Result* results) {
+    // Count how many vectors survive the filter
+    int n_search = 0;
+    if (filter_mask) {
+        for (int i = 0; i < idx->count; i++) {
+            if (filter_mask[i]) n_search++;
+        }
+        if (n_search == 0) {
+            // No survivors — return empty results
+            for (int i = 0; i < k; i++) { results[i].id = 0; results[i].score = -1.0f; }
+            return;
+        }
+    } else {
+        n_search = idx->count;
+    }
+
+    // Build contiguous arrays for the survivors
+    f32* search_vecs;
+    u64* search_ids;
+    if (filter_mask) {
+        search_vecs = (f32*)malloc((size_t)n_search * (size_t)idx->dim * sizeof(f32));
+        search_ids  = (u64*)malloc((size_t)n_search * sizeof(u64));
+        int j = 0;
+        for (int i = 0; i < idx->count; i++) {
+            if (filter_mask[i]) {
+                memcpy(search_vecs + j * idx->dim, idx->vectors + i * idx->dim, (size_t)idx->dim * sizeof(f32));
+                search_ids[j] = idx->ids[i];
+                j++;
+            }
+        }
+    } else {
+        search_vecs = idx->vectors;
+        search_ids  = idx->ids;
+    }
+
+    VDB_Result* all_results = (VDB_Result*)malloc((size_t)n_search * sizeof(VDB_Result));
     
     // GPU Path
     VulkanCtx* vk = &idx->ctx->vk_ctx;
     
-    // 1. Upload Data (Naive: Upload all every time for prototype correctness)
-    // Optimization: Only upload new part? Or keep mirror?
-    // For now: Upload everything.
-    Vulkan_UploadIndex(vk, idx->vectors, idx->count * idx->dim * sizeof(f32));
-    Vulkan_UploadQuery(vk, query_vec, idx->dim * sizeof(f32));
+    Vulkan_UploadIndex(vk, search_vecs, (size_t)n_search * (size_t)idx->dim * sizeof(f32));
+    Vulkan_UploadQuery(vk, query_vec, (size_t)idx->dim * sizeof(f32));
     
-    // 2. Dispatch
-    // Metric mapping: Cosine=1, Dot=2
     u32 metric_id = 1;
     if (idx->metric == VDB_METRIC_DOT) metric_id = 2;
     
-    Vulkan_Dispatch(vk, idx->count, idx->dim, metric_id);
+    Vulkan_Dispatch(vk, n_search, idx->dim, metric_id);
     
-    // 3. Download Scores
-    f32* gpu_scores = (f32*)malloc(idx->count * sizeof(f32));
-    Vulkan_DownloadScores(vk, gpu_scores, idx->count * sizeof(f32));
+    f32* gpu_scores = (f32*)malloc((size_t)n_search * sizeof(f32));
+    Vulkan_DownloadScores(vk, gpu_scores, (size_t)n_search * sizeof(f32));
     
-    // 4. Fill results
-    for (int i = 0; i < idx->count; i++) {
-        all_results[i].id = idx->ids[i];
+    for (int i = 0; i < n_search; i++) {
+        all_results[i].id = search_ids[i];
         all_results[i].score = gpu_scores[i];
     }
     free(gpu_scores);
     
-    // 2. Sort (Naive full sort for now)
-    qsort(all_results, idx->count, sizeof(VDB_Result), compare_results);
+    qsort(all_results, (size_t)n_search, sizeof(VDB_Result), compare_results);
     
-    // 3. Copy top k
-    int n = (k < idx->count) ? k : idx->count;
+    int n = (k < n_search) ? k : n_search;
     for (int i = 0; i < n; i++) {
         results[i] = all_results[i];
     }
-    // Fill rest with empty if needed
     for (int i = n; i < k; i++) {
         results[i].id = 0;
         results[i].score = -1.0f;
     }
     
     free(all_results);
+    if (filter_mask) {
+        free(search_vecs);
+        free(search_ids);
+    }
 }
 
 void VDB_Index_Save(VDB_Index* idx, const char* filename) {

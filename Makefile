@@ -15,7 +15,7 @@ SRC_DIR = src
 BUILD_DIR = build
 VENDOR_DIR = vendor
 
-SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/vectordb.c $(SRC_DIR)/memory.c $(SRC_DIR)/vulkan_backend.c $(VENDOR_DIR)/volk.c
+SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/vectordb.c $(SRC_DIR)/memory.c $(SRC_DIR)/metadata.c $(SRC_DIR)/vulkan_backend.c $(VENDOR_DIR)/volk.c
 OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
 TARGET = $(BUILD_DIR)/memo
 BINDIR ?= $(HOME)/.local/bin
@@ -47,7 +47,7 @@ $(LLM_SHADER_SPV): $(LLM_SHADER_SRC)
 clean:
 	rm -rf $(BUILD_DIR)
 
-install: $(TARGET)
+install: all
 	@mkdir -p $(BINDIR)
 	install -m 755 $(TARGET) $(BINDIR)/memo
 	@echo "Installed memo to $(BINDIR)/memo"

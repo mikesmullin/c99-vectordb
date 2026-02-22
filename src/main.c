@@ -1,4 +1,5 @@
 #include "vectordb.h"
+#include "metadata.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -279,13 +280,18 @@ static int ensure_parent_dir_for_file(const char* file_path) {
     return 1;
 }
 
-static void build_db_paths(const char* base, char* index_path, size_t index_size, char* txt_path, size_t txt_size) {
+static void build_db_paths(const char* base,
+                           char* index_path, size_t index_size,
+                           char* txt_path, size_t txt_size,
+                           char* meta_path, size_t meta_size) {
     if (has_path_separator(base)) {
         snprintf(index_path, index_size, "%s.memo", base);
         snprintf(txt_path, txt_size, "%s.txt", base);
+        snprintf(meta_path, meta_size, "%s.meta", base);
     } else {
         snprintf(index_path, index_size, "db/%s.memo", base);
         snprintf(txt_path, txt_size, "db/%s.txt", base);
+        snprintf(meta_path, meta_size, "db/%s.meta", base);
     }
 }
 
@@ -319,19 +325,25 @@ static int is_integer(const char* s) {
 static void print_help(void) {
     printf("Usage:\n");
     printf("  memo [--help] [-v] [-f <file>]\n");
-    printf("  memo save [-f <file>] [-v] [<id>] <note>\n");
-    printf("  memo recall [-f <file>] [-v] [-k <N>] <query>\n");
+    printf("  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note>\n");
+    printf("  memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>\n");
     printf("  memo clear [-f <file>] [-v]\n\n");
     printf("Options:\n");
-    printf("  [-f <file>] Optional DB basename (default: db/memo)\n");
-    printf("  -v          Verbose logs to stderr\n");
-    printf("  --help      Show this help\n");
+    printf("  [-f <file>]        Optional DB basename (default: db/memo)\n");
+    printf("  -v                 Verbose logs to stderr\n");
+    printf("  -m <yaml>          Attach YAML Flow metadata to a saved record\n");
+    printf("  --filter <expr>    Filter recall results by metadata\n");
+    printf("  --help             Show this help\n");
 }
 
-static int load_state(VDB_Context* ctx, TextStore* ts, const char* db_base, VDB_Index** out_index) {
+static int load_state(VDB_Context* ctx, TextStore* ts, MetaStore* ms, const char* db_base, VDB_Index** out_index) {
     char index_path[PATH_MAX];
     char txt_path[PATH_MAX];
-    build_db_paths(db_base, index_path, sizeof(index_path), txt_path, sizeof(txt_path));
+    char meta_path[PATH_MAX];
+    build_db_paths(db_base,
+                   index_path, sizeof(index_path),
+                   txt_path, sizeof(txt_path),
+                   meta_path, sizeof(meta_path));
 
     VDB_Index* index = VDB_Index_Create(ctx, DIM, VDB_METRIC_COSINE, 10000);
     if (access(index_path, F_OK) == 0) {
@@ -342,6 +354,10 @@ static int load_state(VDB_Context* ctx, TextStore* ts, const char* db_base, VDB_
             if (access(txt_path, F_OK) == 0) {
                 TextStore_Load(ts, txt_path);
             }
+            ms->count = 0;
+            if (access(meta_path, F_OK) == 0) {
+                MetaStore_Load(ms, meta_path);
+            }
         }
     }
 
@@ -349,27 +365,36 @@ static int load_state(VDB_Context* ctx, TextStore* ts, const char* db_base, VDB_
     return 1;
 }
 
-static int save_state(VDB_Index* index, TextStore* ts, const char* db_base) {
+static int save_state(VDB_Index* index, TextStore* ts, MetaStore* ms, const char* db_base) {
     if (!has_path_separator(db_base) && !ensure_db_dir()) {
         return 0;
     }
     char index_path[PATH_MAX];
     char txt_path[PATH_MAX];
-    build_db_paths(db_base, index_path, sizeof(index_path), txt_path, sizeof(txt_path));
+    char meta_path[PATH_MAX];
+    build_db_paths(db_base,
+                   index_path, sizeof(index_path),
+                   txt_path, sizeof(txt_path),
+                   meta_path, sizeof(meta_path));
     if (!ensure_parent_dir_for_file(index_path) || !ensure_parent_dir_for_file(txt_path)) {
         return 0;
     }
     VDB_Index_Save(index, index_path);
     TextStore_Save(ts, txt_path);
+    MetaStore_Save(ms, meta_path);
     return 1;
 }
 
 static int clear_state(const char* db_base) {
     char index_path[PATH_MAX];
     char txt_path[PATH_MAX];
+    char meta_path[PATH_MAX];
     int removed_any = 0;
 
-    build_db_paths(db_base, index_path, sizeof(index_path), txt_path, sizeof(txt_path));
+    build_db_paths(db_base,
+                   index_path, sizeof(index_path),
+                   txt_path, sizeof(txt_path),
+                   meta_path, sizeof(meta_path));
 
     if (unlink(index_path) == 0) removed_any = 1;
     else if (errno != ENOENT) {
@@ -383,10 +408,16 @@ static int clear_state(const char* db_base) {
         return 0;
     }
 
+    if (unlink(meta_path) == 0) removed_any = 1;
+    else if (errno != ENOENT) {
+        fprintf(stderr, "Error: failed to remove %s: %s\n", meta_path, strerror(errno));
+        return 0;
+    }
+
     if (removed_any) {
-        printf("Cleared memory database (%s, %s)\n", index_path, txt_path);
+        printf("Cleared memory database (%s, %s, %s)\n", index_path, txt_path, meta_path);
     } else {
-        printf("Database already empty (%s, %s)\n", index_path, txt_path);
+        printf("Database already empty (%s, %s, %s)\n", index_path, txt_path, meta_path);
     }
     return 1;
 }
@@ -395,6 +426,8 @@ static int clear_state(const char* db_base) {
 
 int main(int argc, char** argv) {
     const char* db_base = "memo";
+    const char* meta_yaml = NULL;    // -m <yaml>
+    const char* filter_expr = NULL;  // --filter <expr>
     char* positional[64];
     int positional_count = 0;
 
@@ -409,6 +442,22 @@ int main(int argc, char** argv) {
                 return 1;
             }
             db_base = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "-m") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: -m requires a YAML metadata string\n");
+                return 1;
+            }
+            meta_yaml = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--filter") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --filter requires a filter expression\n");
+                return 1;
+            }
+            filter_expr = argv[++i];
             continue;
         }
         positional[positional_count++] = argv[i];
@@ -449,8 +498,11 @@ int main(int argc, char** argv) {
     TextStore ts;
     TextStore_Init(&ts, 10000, &arena);
 
+    MetaStore ms;
+    MetaStore_Init(&ms, 10000, &arena);
+
     VDB_Index* index = NULL;
-    load_state(&ctx, &ts, db_base, &index);
+    load_state(&ctx, &ts, &ms, db_base, &index);
 
     if (strcmp(command, "save") == 0) {
         if (positional_count < 2) {
@@ -486,6 +538,7 @@ int main(int argc, char** argv) {
                 return 1;
             }
             TextStore_Set(&ts, override_id, note);
+            MetaStore_Set(&ms, override_id, meta_yaml);
             for (int j = 0; j < DIM; j++) {
                 index->vectors[override_id * DIM + j] = vec[j];
             }
@@ -498,10 +551,11 @@ int main(int argc, char** argv) {
                 Arena__Free(&arena);
                 return 1;
             }
+            MetaStore_Add(&ms, meta_yaml);
             VDB_Index_Add(index, id, vec);
         }
 
-        if (!save_state(index, &ts, db_base)) {
+        if (!save_state(index, &ts, &ms, db_base)) {
             free(note);
             Arena__Free(&arena);
             return 1;
@@ -542,8 +596,15 @@ int main(int argc, char** argv) {
             f32 vec[DIM];
             embed_text_llm(query, vec, DIM, &arena);
 
+            // Build filter mask if --filter was provided
+            u8* filter_mask = NULL;
+            if (filter_expr) {
+                filter_mask = (u8*)Arena__Push(&arena, (size_t)index->count);
+                MetaStore_Filter(&ms, filter_expr, filter_mask, index->count);
+            }
+
             VDB_Result results[100];
-            VDB_Search(index, vec, k, results);
+            VDB_Search(index, vec, k, filter_mask, results);
             for (int i = 0; i < k; i++) {
                 if (results[i].score < -0.9f) continue;
                 u64 id = results[i].id;

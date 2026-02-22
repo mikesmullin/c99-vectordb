@@ -7,3 +7,4 @@ docs/
 *.txt
 PROMPT.md
 .cache/
+/db/*
