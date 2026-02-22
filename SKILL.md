@@ -7,7 +7,7 @@
 ```text
 Usage:
   memo [--help] [-v] [-f <file>]
-  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note|->
+  memo save [-f <file>] [-v] [-m <yaml>] [-i <path>]... [<id>] <note|->
   memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>
   memo clean [-f <file>] [-v]
 
@@ -15,6 +15,8 @@ Options:
   [-f <file>]        Optional DB basename (default: memo)
   -v                 Verbose logs to stderr
   -m <yaml>          Attach YAML Flow metadata to a saved record
+  -i <path>          Save one or more note files in one process (repeat -i)
+                     In batch mode, each -i captures the most recent -m metadata
   --filter <expr>    Filter recall results by metadata
   --help             Show this help
 ```
@@ -24,6 +26,8 @@ Options:
 - `memo` or `memo --help` prints help.
 - `memo save <note>` stores a new memory.
 - `memo save -` reads the note from stdin (useful for multi-line notes/documents).
+- `memo save -i <path>` saves one or more note files in one process (repeat `-i`).
+- In batch mode, metadata can be per-entry by interleaving: `-m <meta1> -i <file1> -m <meta2> -i <file2>`.
 - `memo save -m '<yaml>' <note>` stores a memory with YAML Flow metadata (e.g. `source: user, tags: [health]`).
 - `memo save <id> <note>` overwrites memory at an existing ID.
 - `memo recall <query>` recalls top matches (default `k=2`).
@@ -106,3 +110,6 @@ Top 3 results for 'health info':
 - Optional custom DB path with `-f`:
   - `memo -f /tmp/memo_test save hello world`
   - `memo -f /tmp/memo_test recall hello`
+- Batch file save:
+  - `memo save -m "source: docs" -i notes/a.md -i notes/b.md`
+  - `memo save -m "source: a" -i notes/a.md -m "source: b" -i notes/b.md`

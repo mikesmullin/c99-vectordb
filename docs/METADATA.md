@@ -43,7 +43,7 @@ All three files share the same ID space (index 0..N-1).
 ### `memo save`
 
 ```
-memo save [-f <file>] [-m <yaml>] [<id>] <note|->
+memo save [-f <file>] [-m <yaml>] [-i <path>]... [<id>] <note|->
 ```
 
 The `-m` flag attaches YAML Flow metadata to the saved record. If omitted, the
@@ -52,11 +52,19 @@ record is stored with no metadata (it will not match any filter).
 Passing `-` as the note means "read note text from stdin", which is useful for
 multi-line documents.
 
+Passing `-i` saves one or more files in a single process (repeat `-i`). This
+avoids reloading the model for each file.
+
+For per-file metadata in batch mode, interleave `-m` and `-i`: each `-i`
+entry captures the most recent `-m` value.
+
 ```bash
 memo save -m "source: chat, tags: [personal]" I love sushi
 memo save -m "ts: 2026-02-21" My meeting is at 3pm
 memo save My cat is named Luna          # no metadata
 cat note.md | memo save -m "source: user" -
+memo save -m "source: user" -i notes/one.yaml -i notes/two.yaml
+memo save -m "source: file1" -i notes/one.yaml -m "source: file2" -i notes/two.yaml
 ```
 
 ### `memo recall`

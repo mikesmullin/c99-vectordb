@@ -1,7 +1,7 @@
 CC = clang
 UNAME_S := $(shell uname -s)
 
-CFLAGS = -std=c99 -O3 -Wall -Wextra -pedantic -I vendor
+CFLAGS = -std=c99 -O3 -Wall -Wextra -pedantic -Wno-c11-extensions -Wno-missing-field-initializers -I vendor
 LDFLAGS = -lm -lpthread
 
 ifeq ($(UNAME_S),Darwin)

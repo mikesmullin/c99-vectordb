@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <inttypes.h>
+#include <ctype.h>
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -333,6 +334,84 @@ static char* join_args(int start, int argc, char** argv) {
     return out;
 }
 
+static char* trim_inplace(char* s) {
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (*s == '\0') return s;
+    char* end = s + strlen(s) - 1;
+    while (end > s && isspace((unsigned char)*end)) {
+        *end = '\0';
+        end--;
+    }
+    return s;
+}
+
+typedef struct {
+    char* path;
+    char* meta;
+} BatchInputEntry;
+
+static int append_input_file(BatchInputEntry* entries, int* input_count, int max_input_files,
+                             const char* path_arg, const char* active_meta) {
+    if (!path_arg || !*path_arg) return 0;
+
+    if (*input_count >= max_input_files) {
+        return 0;
+    }
+
+    char* tmp = strdup(path_arg);
+    if (!tmp) return 0;
+    char* path = trim_inplace(tmp);
+    if (!*path) {
+        free(tmp);
+        return 0;
+    }
+
+    entries[*input_count].path = strdup(path);
+    entries[*input_count].meta = active_meta ? strdup(active_meta) : NULL;
+    free(tmp);
+
+    if (!entries[*input_count].path || (active_meta && !entries[*input_count].meta)) {
+        return 0;
+    }
+
+    (*input_count)++;
+    return 1;
+}
+
+static char* read_file_to_string(const char* filename) {
+    FILE* f = fopen(filename, "rb");
+    if (!f) return NULL;
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    long sz = ftell(f);
+    if (sz < 0) {
+        fclose(f);
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
+
+    char* buf = (char*)malloc((size_t)sz + 1);
+    if (!buf) {
+        fclose(f);
+        return NULL;
+    }
+
+    size_t n = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (n != (size_t)sz) {
+        free(buf);
+        return NULL;
+    }
+    buf[sz] = '\0';
+    return buf;
+}
+
 static char* read_note_from_stdin(void) {
     size_t cap = 4096;
     size_t len = 0;
@@ -398,13 +477,15 @@ static int is_integer(const char* s) {
 static void print_help(void) {
     printf("Usage:\n");
     printf("  memo [--help] [-v] [-f <file>]\n");
-    printf("  memo save [-f <file>] [-v] [-m <yaml>] [<id>] <note|->\n");
+    printf("  memo save [-f <file>] [-v] [-m <yaml>] [-i <path>]... [<id>] <note|->\n");
     printf("  memo recall [-f <file>] [-v] [-k <N>] [--filter <expr>] <query>\n");
     printf("  memo clean [-f <file>] [-v]\n\n");
     printf("Options:\n");
     printf("  [-f <file>]        Optional DB basename (default: memo)\n");
     printf("  -v                 Verbose logs to stderr\n");
     printf("  -m <yaml>          Attach YAML Flow metadata to a saved record\n");
+    printf("  -i <path>          Save one or more note files in one process (repeat -i)\n");
+    printf("                     In batch mode, each -i captures the most recent -m metadata\n");
     printf("  <note|->           Use '-' to read note text from stdin\n");
     printf("  --filter <expr>    Filter recall results by metadata\n");
     printf("  --help             Show this help\n");
@@ -499,8 +580,16 @@ int main(int argc, char** argv) {
     const char* db_base = "memo";
     const char* meta_yaml = NULL;    // -m <yaml>
     const char* filter_expr = NULL;  // --filter <expr>
+    enum { MAX_INPUT_FILES = 512 };
+    BatchInputEntry input_entries[MAX_INPUT_FILES];
+    int input_count = 0;
     char* positional[64];
     int positional_count = 0;
+
+    for (int i = 0; i < MAX_INPUT_FILES; i++) {
+        input_entries[i].path = NULL;
+        input_entries[i].meta = NULL;
+    }
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) {
@@ -529,6 +618,17 @@ int main(int argc, char** argv) {
                 return 1;
             }
             filter_expr = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "-i") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: %s requires a value\n", argv[i]);
+                return 1;
+            }
+            if (!append_input_file(input_entries, &input_count, MAX_INPUT_FILES, argv[++i], meta_yaml)) {
+                fprintf(stderr, "Error: failed to parse -i value\n");
+                return 1;
+            }
             continue;
         }
         positional[positional_count++] = argv[i];
@@ -586,10 +686,57 @@ int main(int argc, char** argv) {
     load_state(&ctx, &ts, &ms, db_base, &index);
 
     if (strcmp(command, "save") == 0) {
-        if (positional_count < 2) {
-            fprintf(stderr, "Error: save requires <note> or [<id>] <note>\n");
+        if (input_count == 0 && positional_count < 2) {
+            fprintf(stderr, "Error: save requires <note>, [<id>] <note>, or -i <file>\n");
             Arena__Free(&arena);
             return 1;
+        }
+
+        if (input_count > 0) {
+            if (positional_count != 1) {
+                fprintf(stderr, "Error: save with -i does not accept <id> or <note>\n");
+                Arena__Free(&arena);
+                return 1;
+            }
+
+            for (int fi = 0; fi < input_count; fi++) {
+                char* note = read_file_to_string(input_entries[fi].path);
+                if (!note) {
+                    fprintf(stderr, "Error: failed to read input file '%s'\n", input_entries[fi].path);
+                    Arena__Free(&arena);
+                    return 1;
+                }
+                if (note[0] == '\0') {
+                    fprintf(stderr, "Error: input file '%s' is empty\n", input_entries[fi].path);
+                    free(note);
+                    Arena__Free(&arena);
+                    return 1;
+                }
+
+                f32 vec[DIM];
+                embed_text_llm(note, vec, DIM, &arena);
+
+                u64 id = TextStore_Add(&ts, note);
+                if (id == (u64)-1) {
+                    fprintf(stderr, "Error: text store is full\n");
+                    free(note);
+                    Arena__Free(&arena);
+                    return 1;
+                }
+                MetaStore_Add(&ms, input_entries[fi].meta);
+                VDB_Index_Add(index, id, vec);
+
+                printf("Memorized file: '%s' (ID: %" PRIu64 ")\n", input_entries[fi].path, id);
+                free(note);
+            }
+
+            if (!save_state(index, &ts, &ms, db_base)) {
+                Arena__Free(&arena);
+                return 1;
+            }
+
+            Arena__Free(&arena);
+            return 0;
         }
 
         int note_start = 1;
