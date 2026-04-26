@@ -24,6 +24,17 @@ class Result:
     score: float
 
 
+class LiteralString(str):
+    pass
+
+
+def literal_string_representer(dumper: yaml.Dumper, data: LiteralString) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style="|")
+
+
+yaml.SafeDumper.add_representer(LiteralString, literal_string_representer)
+
+
 def vlog(enabled: bool, msg: str) -> None:
     if enabled:
         print(msg, file=sys.stderr)
@@ -104,7 +115,7 @@ def save_yaml_tables(path: Path, texts: list[str], metas: list[dict[str, Any] | 
         rec: dict[str, Any] = {
             "id": doc_id,
             "metadata": metas[doc_id] if doc_id < len(metas) and metas[doc_id] is not None else {},
-            "body": body,
+            "body": LiteralString(body),
         }
         docs.append(rec)
 
