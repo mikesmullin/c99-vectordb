@@ -298,8 +298,8 @@ def search_all(index: faiss.IndexIDMap2, query_vec: np.ndarray) -> list[Result]:
     return out
 
 
-def print_recall_result_multiline(rank: int, score: float, text: str) -> None:
-    print(f"  [{rank}] Score: {score:.4f} |")
+def print_recall_result_multiline(doc_id: int, score: float, text: str) -> None:
+    print(f"  [{doc_id}] Score: {score:.4f} |")
     lines = text.splitlines() or [""]
     for ln in lines:
         print(f"      {ln}")
@@ -450,7 +450,14 @@ def command_save(db_base: str, save_yaml_path: str, user_cwd: str, verbose: bool
     return 0
 
 
-def command_recall(db_base: str, query: str, k: int, filter_expr: str | None, user_cwd: str) -> int:
+def command_recall(
+    db_base: str,
+    query: str,
+    k: int,
+    filter_expr: str | None,
+    as_yaml: bool,
+    user_cwd: str,
+) -> int:
     index_path, yaml_path = build_db_paths(db_base, user_cwd)
 
     try:
@@ -461,8 +468,11 @@ def command_recall(db_base: str, query: str, k: int, filter_expr: str | None, us
 
     index = load_index(index_path, verbose=False)
 
-    print(f"Top {k} results for '{query}':")
+    if not as_yaml:
+        print(f"Top {k} results:")
     if index.ntotal == 0:
+        if as_yaml:
+            print(yaml.safe_dump({"results": []}, sort_keys=False).strip())
         return 0
 
     query_vec = embed_text_hash(query)
@@ -477,6 +487,7 @@ def command_recall(db_base: str, query: str, k: int, filter_expr: str | None, us
             return 1
 
     shown = 0
+    yaml_results: list[dict[str, Any]] = []
     for result in all_results:
         if shown >= k:
             break
@@ -497,8 +508,20 @@ def command_recall(db_base: str, query: str, k: int, filter_expr: str | None, us
         text = texts[doc_id] or ""
         if is_blank_body(text):
             continue
-        print_recall_result_multiline(shown + 1, result.score, text)
+        if as_yaml:
+            yaml_results.append(
+                {
+                    "id": doc_id,
+                    "score": float(result.score),
+                    "body": LiteralString(text),
+                }
+            )
+        else:
+            print_recall_result_multiline(doc_id, result.score, text)
         shown += 1
+
+    if as_yaml:
+        print(yaml.safe_dump({"results": yaml_results}, sort_keys=False).strip())
 
     return 0
 
@@ -674,7 +697,7 @@ def print_help() -> None:
     print("Usage:")
     print("  memo --help")
     print("  memo -f <base> [-v] save <yaml_file>")
-    print("  memo -f <base> [-v] recall [-k <N>] [--filter <expr>] <query>")
+    print("  memo -f <base> [-v] recall [-k <N>] [--filter <expr>] [--yaml] <query>")
     print("  memo -f <base> [-v] analyze --filter <expr> [--fields <list>] [--stats <key>] [--limit <N>] [--offset <N>]")
     print("  memo -f <base> [-v] clean")
     print("  memo -f <base> [-v] reindex")
@@ -693,6 +716,7 @@ def print_help() -> None:
     print("                     Each doc requires: metadata: <map>, body: <string>")
     print("                     Optional per-doc id: <int> to overwrite existing record")
     print("  --filter <expr>    Filter recall results by metadata")
+    print("  --yaml             recall only: emit YAML results with id, score, body")
     print("  --fields <list>    analyze only: comma-separated columns (e.g. id,source,metadata)")
     print("  --stats <key>      analyze only: cardinality + numeric/date-like range for key")
     print("  --limit <N>        analyze only: max rows to print (default: 100)")
@@ -735,6 +759,7 @@ def parse_args(argv: list[str]) -> tuple[dict[str, Any], int]:
 def parse_recall_args(args: list[str]) -> tuple[dict[str, Any], int]:
     k = 2
     filter_expr: str | None = None
+    as_yaml = False
     query_parts: list[str] = []
 
     i = 0
@@ -758,6 +783,10 @@ def parse_recall_args(args: list[str]) -> tuple[dict[str, Any], int]:
             filter_expr = args[i + 1]
             i += 2
             continue
+        if arg == "--yaml":
+            as_yaml = True
+            i += 1
+            continue
         query_parts.append(arg)
         i += 1
 
@@ -771,7 +800,7 @@ def parse_recall_args(args: list[str]) -> tuple[dict[str, Any], int]:
     if k > MAX_K:
         k = MAX_K
 
-    return {"k": k, "filter_expr": filter_expr, "query": query}, 0
+    return {"k": k, "filter_expr": filter_expr, "as_yaml": as_yaml, "query": query}, 0
 
 
 def parse_analyze_args(args: list[str]) -> tuple[dict[str, Any], int]:
@@ -897,6 +926,7 @@ def main() -> int:
             recall_args["query"],
             recall_args["k"],
             recall_args["filter_expr"],
+            recall_args["as_yaml"],
             user_cwd,
         )
 
